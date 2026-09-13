@@ -48,6 +48,10 @@ def create_app(cfg=None) -> FastAPI:
     def index() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "index.html")
 
+    @app.get("/marked.min.js", include_in_schema=False)
+    def marked_js() -> FileResponse:
+        return FileResponse(FRONTEND_DIR / "marked.min.js")
+
     app.include_router(routes_auth.router)
     app.include_router(routes_upload.router)
     app.include_router(routes_ask.router)
