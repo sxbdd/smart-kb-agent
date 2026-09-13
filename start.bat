@@ -25,7 +25,7 @@ if not exist .venv (
 
 if not exist .env (
     copy .env.example .env >nul
-    echo [提示] 已生成 .env，请填入 LLM_API_KEY 后重新运行本脚本。
+    echo [提示] 已生成 .env，请填入 LLM_API_KEY 与 MYSQL_PASSWORD 后重新运行本脚本。
     pause
     exit /b 0
 )
