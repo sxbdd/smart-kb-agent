@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_TEST_SET = Path(__file__).resolve().parent.parent.parent / "data" / "evaluation" / "test_set.json"
+# 注意：必须与实际存在的测试集文件名一致，否则不传 test_set_path 时必然 500
+# （历史 bug：这里曾指向不存在的 test_set.json，见 docs/review-v1-audit.md §2.1）
+DEFAULT_TEST_SET = Path(__file__).resolve().parent.parent.parent / "data" / "evaluation" / "test_set_smart.json"
 
 REFUSAL_PHRASES = (
     "无法回答",

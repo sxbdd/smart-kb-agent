@@ -12,9 +12,11 @@ env/
 # 环境与密钥
 .env
 
-# 数据与模型（保留 data/evaluation 下的测试集）
+# 数据与模型
+# 保留 data/evaluation（测试集）与 data/kb（标准语料）—— 它们决定评测可复现性
 data/documents/
 data/chroma_db/
+data/backups/
 data/*.db
 *.db
 *.sqlite3

@@ -24,8 +24,8 @@ echo [3/3] 检查并安装依赖...
 if errorlevel 1 ( echo 依赖安装失败 & pause & exit /b 1 )
 
 if not exist .env (
-    copy .env.example .env >nul
-    echo [提示] 已生成 .env，请填入 LLM_API_KEY 与 MYSQL_PASSWORD 后重新运行本脚本。
+    .venv\Scripts\python scripts\init_env.py
+    echo [提示] 请填入 LLM_API_KEY 与 MYSQL_PASSWORD 后重新运行本脚本。
     pause
     exit /b 0
 )
@@ -40,6 +40,7 @@ if exist "%USERPROFILE%\.cache\huggingface\hub\models--BAAI--bge-small-zh-v1.5" 
     echo [提示] 首次运行：将从国内镜像下载 BGE 模型（约 100MB，仅此一次）
 )
 
-echo 启动服务：http://127.0.0.1:8000/
-start "" http://127.0.0.1:8000/
+echo 启动服务：http://127.0.0.1:8000/（就绪后会自动打开浏览器）
+:: 不等就绪直接开浏览器会撞上 ERR_CONNECTION_REFUSED（应用要等模型加载完才监听端口）
+start "" .venv\Scripts\pythonw.exe scripts\open_when_ready.py --log data\startup.log
 .venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload

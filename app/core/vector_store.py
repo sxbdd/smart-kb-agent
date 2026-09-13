@@ -19,6 +19,8 @@ class VectorStore(Protocol):
     def add(self, id: str, embedding: List[float], metadata: dict, document: str) -> None: ...
     def query(self, embedding: List[float], top_k: int) -> List[SearchResult]: ...
     def delete_document(self, document_id: str) -> None: ...
+    def reset(self) -> None: ...
+    def count(self) -> int: ...
 
 
 def _cosine(a: List[float], b: List[float]) -> float:
@@ -50,6 +52,14 @@ class InMemoryVectorStore:
     def delete_document(self, document_id: str) -> None:
         with self._lock:
             self._items = [it for it in self._items if it["metadata"].get("document_id") != document_id]
+
+    def reset(self) -> None:
+        with self._lock:
+            self._items = []
+
+    def count(self) -> int:
+        with self._lock:
+            return len(self._items)
 
 
 class ChromaVectorStore:
@@ -87,6 +97,22 @@ class ChromaVectorStore:
 
     def delete_document(self, document_id: str) -> None:
         self.collection.delete(where={"document_id": document_id})
+
+    def reset(self) -> None:
+        """清空集合。
+
+        直接删集合再重建，比逐条删除更快，也避免残留 HNSW 索引段
+        （`kb_documents` 曾累积 47 个来自测试脚本的 chunk，见 docs/review-v1-audit.md §2.5）。
+        """
+        name = self.collection.name
+        self.client.delete_collection(name)
+        self.collection = self.client.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+    def count(self) -> int:
+        return int(self.collection.count())
 
 
 def get_vector_store(settings) -> VectorStore:

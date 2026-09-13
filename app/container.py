@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
+from app.api.ratelimit import SlidingWindowLimiter
 from app.config import Settings, settings
 from app.core.embedding import get_embedding_provider
 from app.core.llm_client import get_llm_client
@@ -46,12 +47,13 @@ def build_container(cfg: Settings | None = None) -> SimpleNamespace:
     )
     agent = AgentEngine(llm=llm, tools=build_tools(rag), rag=rag, max_iterations=cfg.agent_max_iterations)
     chat = ChatService(llm=llm)
-    router = Router(llm=llm, enable_llm=False)
+    router = Router(llm=llm, enable_llm=cfg.router_enable_llm)
     conversation = ConversationService(db=db, router=router, chat=chat, rag=rag, agent=agent)
     auth = AuthService(db=db, jwt_secret=cfg.jwt_secret, jwt_expire_minutes=cfg.jwt_expire_minutes)
+    auth_limiter = SlidingWindowLimiter(cfg.auth_rate_limit_per_minute)
 
     return SimpleNamespace(
         settings=cfg, db=db, embedder=embedder, vector_store=vector_store, llm=llm,
         reranker=reranker, ingestion=ingestion, rag=rag, agent=agent, chat=chat,
-        router=router, conversation=conversation, auth=auth,
+        router=router, conversation=conversation, auth=auth, auth_limiter=auth_limiter,
     )

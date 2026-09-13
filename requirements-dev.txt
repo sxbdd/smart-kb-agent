@@ -1,2 +1,6 @@
+# 开发环境：完整依赖 + 测试工具
+#
+# 只跑离线测试时可改用 requirements-ci.txt（体积小得多，不需要 torch / chromadb）：
+#   pip install -r requirements-ci.txt
 -r requirements.txt
 pytest>=8.0

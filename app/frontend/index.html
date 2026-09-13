@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>智能知识库 · RAG + Agent</title>
+<link rel="icon" href="data:," />
 <style>
   :root {
     --bg: #ffffff; --bg-subtle: #f7f8fa; --text: #1f2933; --text-secondary: #52606d; --text-muted: #7b8794;
@@ -200,6 +201,7 @@
   </div>
 
   <script src="/marked.min.js"></script>
+  <script src="/purify.min.js"></script>
   <script>
   const BASE = "";
   const DOC_PAGE_SIZE = 10;
@@ -299,7 +301,14 @@
       '<div class="answer-meta"><span></span><button class="copy-btn" onclick="copyText(this)">复制</button></div>'+
       renderSources(sources);
   }
-  function renderMarkdown(text){ return (typeof marked!=="undefined") ? marked.parse(text||"",{breaks:true,gfm:true}) : escapeHtml(text); }
+  // LLM 回答经 marked 渲染后必须消毒再入 DOM：文档里若含 HTML（如 <img onerror>）
+  // 且被模型回显，直接 innerHTML 会执行脚本（见 docs/review-v1-audit.md §2.12）。
+  function renderMarkdown(text){
+    if(typeof marked==="undefined") return escapeHtml(text);
+    const html = marked.parse(text||"", {breaks:true, gfm:true});
+    if(typeof DOMPurify!=="undefined") return DOMPurify.sanitize(html);
+    return escapeHtml(text);   // 消毒库缺失时降级为纯文本，绝不裸渲染
+  }
   function renderSources(sources){
     if(!sources||!sources.length) return "";
     const items=sources.map(s=>
@@ -340,7 +349,8 @@
     if(!f){ selectedFile=null; $("file-preview").classList.add("hidden"); $("upload-btn").disabled=true; return; }
     selectedFile=f;
     const pv=$("file-preview");
-    pv.innerHTML='<div class="fp-name">'+escapeHtml(f.name)+'</div><div class="fp-meta">'+formatSize(f.size)+' · '+(f.name.split(".").pop()||"").toUpperCase()+'</div><div class="fp-text" id="fp-text">读取预览中...</div>';
+    pv.innerHTML='<div class="fp-name">'+escapeHtml(f.name)+'</div><div class="fp-meta">'+formatSize(f.size)+' · '+(f.name.split(".").pop()||"").toUpperCase()+'</div><div class="fp-text" id="fp-text">读取预览中...</div>'+
+      '<div class="fp-actions"><button class="small-btn danger" onclick="cancelUpload()">取消</button></div>';
     pv.classList.remove("hidden");
     $("upload-btn").disabled=false;
     if(/\.(md|txt)$/i.test(f.name)){

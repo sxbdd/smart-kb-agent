@@ -1,8 +1,10 @@
 """意图路由：规则优先 + LLM 分类（可选） + RAG 兜底。"""
 from __future__ import annotations
 
+import logging
 import re
-from typing import Optional
+
+logger = logging.getLogger("router")
 
 _CALC_PATTERN = re.compile(r"^[\d\s+\-*/%().^]+$")
 _CHAT_PATTERNS = [
@@ -12,6 +14,11 @@ _KB_HINTS = (
     "报销", "考勤", "请假", "年假", "制度", "规定", "流程", "标准",
     "工资", "公积金", "社保", "政策", "手册", "员工", "公司", "出差", "住宿",
 )
+
+
+def is_calculation(question: str) -> bool:
+    """是否为纯计算表达式（供 Router 与 Agent 共用，避免重复实现）。"""
+    return bool(_CALC_PATTERN.match((question or "").strip()))
 
 
 class Router:
@@ -27,7 +34,7 @@ class Router:
             return "rag"
 
         # 规则优先：纯计算表达式 → agent
-        if _CALC_PATTERN.match(q):
+        if is_calculation(q):
             return "agent"
         # 规则优先：明显闲聊 → chat
         if any(p.match(q) for p in _CHAT_PATTERNS):
@@ -36,12 +43,13 @@ class Router:
         if any(h in q for h in _KB_HINTS):
             return "rag"
 
-        # 可选 LLM 分类
+        # 可选 LLM 分类（ROUTER_ENABLE_LLM=true 才启用）
         if self.enable_llm and self.llm is not None:
             try:
                 return self._llm_classify(q)
-            except Exception:
-                pass
+            except Exception as exc:
+                # 分类失败不该影响可用性，但要留下痕迹便于排查（原先静默 pass）
+                logger.warning("LLM 分类失败，回退 RAG：%s", exc)
 
         # 兜底：默认走 RAG（最稳、可追溯）
         return "rag"

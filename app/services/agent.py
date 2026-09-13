@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from app.core.prompt_templates import build_agent_prompt
 from app.models.schemas import Source
+from app.services.router import is_calculation
 
 
 class AgentEngine:
@@ -23,12 +24,23 @@ class AgentEngine:
             history_str = "\n".join([f"{h['role']}: {h['content']}" for h in recent])
             first_user = f"对话历史：\n{history_str}\n\n当前问题：{question}"
 
-        messages = [{"role": "user", "content": first_user}]
-        grounding, sources = self._grounding(question)
-        messages.append({"role": "system", "content": grounding})
+        # Agent prompt 作为首条 system 消息只追加一次；此前每轮迭代都重新追加，
+        # token 随轮次线性增长（见 docs/review-v1-audit.md §2.19）。
+        messages: List[dict] = [{"role": "system", "content": self._agent_prompt()}]
+
+        # 纯计算类问题不需要知识库依据，跳过检索：省一次向量查询，也避免把无关
+        # 片段塞进上下文（此前无条件检索）。
+        if is_calculation(question):
+            grounding, sources = "", []
+        else:
+            grounding, sources = self._grounding(question)
+            if grounding:
+                messages.append({"role": "system", "content": grounding})
+
+        messages.append({"role": "user", "content": first_user})
 
         for _ in range(self.max_iterations):
-            response = self.llm.chat(messages + [{"role": "system", "content": self._agent_prompt()}])
+            response = self.llm.chat(messages)
             thought, action, action_input = self._parse(response)
 
             if not action or action == "Final Answer":

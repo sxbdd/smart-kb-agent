@@ -1,0 +1,14 @@
+# 离线测试与 CI 所需的最小依赖集。
+#
+# 测试默认使用回退组件（EMBEDDING_PROVIDER=hash / VECTOR_STORE=memory / LLM_PROVIDER=fake），
+# 因此不需要 chromadb、sentence-transformers、torch 这些重依赖，也无需 MySQL 与外网。
+# 仓库自身的 CI（.github/workflows/ci.yml）安装的就是本文件。
+fastapi>=0.115
+python-multipart>=0.0.9
+python-dotenv>=1.0
+httpx>=0.27
+pypdf>=4.0
+python-docx>=1.1
+pymysql>=1.1
+PyJWT>=2.8
+pytest>=8.0

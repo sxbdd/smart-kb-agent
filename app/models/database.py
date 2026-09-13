@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS messages (
     sources         TEXT NULL,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    KEY idx_messages_conversation (conversation_id, created_at)
+    KEY idx_messages_conversation (conversation_id, created_at),
+    CONSTRAINT fk_messages_conversation FOREIGN KEY (conversation_id)
+        REFERENCES conversations(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='消息';
 
 CREATE TABLE IF NOT EXISTS evaluation_runs (
@@ -151,6 +153,14 @@ class Database:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
 
+    def delete_all_documents(self) -> int:
+        """清空文档元数据表（重建知识库时使用），返回删除行数。"""
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM documents")
+                return cur.rowcount
+
     # ---- conversations ----
     def create_conversation(self, title: str = "") -> str:
         conv_id = _new_id()
@@ -210,10 +220,41 @@ class Database:
         }
 
     def delete_conversation(self, conv_id: str) -> None:
+        """删除会话及其全部消息。
+
+        先显式删消息：老部署的 messages 表可能没有 fk_messages_conversation 外键
+        （CREATE TABLE IF NOT EXISTS 不会改已存在的表），只删父表会留下孤儿消息
+        （历史 bug，实测残留 2 条，见 docs/review-v1-audit.md §2.4）。
+        """
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
+                cur.execute("DELETE FROM messages WHERE conversation_id = %s", (conv_id,))
                 cur.execute("DELETE FROM conversations WHERE id = %s", (conv_id,))
+
+    def count_orphan_messages(self) -> int:
+        """统计没有对应会话的消息（运维排查用）。"""
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS c FROM messages m "
+                    "LEFT JOIN conversations c ON c.id = m.conversation_id "
+                    "WHERE c.id IS NULL"
+                )
+                return int(cur.fetchone()["c"])
+
+    def purge_orphan_messages(self) -> int:
+        """清理历史遗留的孤儿消息，返回删除条数。"""
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE m FROM messages m "
+                    "LEFT JOIN conversations c ON c.id = m.conversation_id "
+                    "WHERE c.id IS NULL"
+                )
+                return cur.rowcount
 
     # ---- messages ----
     def add_message(self, conv_id: str, role: str, content: str, sources: Optional[list[dict]] = None) -> str:

@@ -6,6 +6,12 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.config import settings as _settings
+
+# 请求边界在 import 时从配置固化（配置项：MAX_QUESTION_CHARS / MAX_TOP_K）
+_MAX_QUESTION_CHARS = _settings.max_question_chars
+_MAX_TOP_K = _settings.max_top_k
+
 
 class DocumentUploadResponse(BaseModel):
     document_id: str = Field(description="文档 ID（UUID）")
@@ -18,7 +24,7 @@ class DocumentUploadResponse(BaseModel):
 class DocumentInfo(BaseModel):
     document_id: str = Field(description="文档 ID（UUID）")
     filename: str = Field(description="原始文件名")
-    file_type: str = Field(description="文件类型：pdf / md / txt")
+    file_type: str = Field(description="文件类型：pdf / md / txt / docx")
     file_size: int = Field(description="文件大小（字节）")
     chunk_count: int = Field(description="切分后的片段数")
     uploaded_at: str = Field(description="上传时间")
@@ -40,9 +46,11 @@ class AuthResponse(BaseModel):
 
 
 class AskRequest(BaseModel):
-    question: str = Field(min_length=1, description="用户问题")
+    # 上限来自配置，防止单请求塞入超长 prompt 或超大 top_k 造成成本/内存放大
+    # （历史问题：question 50 万字、top_k=10^6 都会被接受，见 docs/review-v1-audit.md §2.8）
+    question: str = Field(min_length=1, max_length=_MAX_QUESTION_CHARS, description="用户问题")
     conversation_id: Optional[str] = Field(default=None, description="对话 ID，为空则新建对话")
-    top_k: Optional[int] = Field(default=None, description="检索片段数，为空则使用默认值")
+    top_k: Optional[int] = Field(default=None, ge=1, le=_MAX_TOP_K, description="检索片段数，为空则使用默认值")
 
 
 class Source(BaseModel):

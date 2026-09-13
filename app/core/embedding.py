@@ -6,6 +6,8 @@ import math
 import re
 from typing import List, Protocol
 
+from app.core.hf_cache import prefer_offline_if_cached
+
 _WORD = re.compile(r"[a-zA-Z0-9_]+")
 _CJK = re.compile(r"[\u4e00-\u9fff]")
 
@@ -43,7 +45,10 @@ class HashEmbedding:
 
 
 class SentenceTransformerEmbedding:
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, offline_auto: bool = True) -> None:
+        if offline_auto:
+            # 必须在 import sentence_transformers 之前设置，否则无效
+            prefer_offline_if_cached(model_name)
         from sentence_transformers import SentenceTransformer
 
         self.model = SentenceTransformer(model_name)
@@ -78,7 +83,10 @@ def get_embedding_provider(settings) -> EmbeddingProvider:
     if provider == "hash":
         return HashEmbedding(settings.hash_embedding_dim)
     if provider == "sentence-transformers":
-        return SentenceTransformerEmbedding(settings.embedding_model)
+        return SentenceTransformerEmbedding(
+            settings.embedding_model,
+            offline_auto=getattr(settings, "hf_offline_auto", True),
+        )
     if provider == "openai":
         api_key = settings.embedding_api_key or settings.llm_api_key
         return OpenAIEmbedding(settings.embedding_api_base, api_key, settings.embedding_model)
