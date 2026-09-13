@@ -12,7 +12,10 @@ class LLMClient(Protocol):
 
 
 class OpenAICompatClient:
-    def __init__(self, api_base: str, api_key: str, model: str, timeout: float = 60.0, max_tokens: int = 1024, max_retries: int = 3) -> None:
+    #: 空内容且 finish_reason=length 时的预算上限（推理模型的思考会吃掉 max_tokens）
+    MAX_TOKEN_CEILING = 8192
+
+    def __init__(self, api_base: str, api_key: str, model: str, timeout: float = 60.0, max_tokens: int = 4096, max_retries: int = 3) -> None:
         import httpx
 
         self.api_base = api_base.rstrip("/")
@@ -26,15 +29,16 @@ class OpenAICompatClient:
     def chat(self, messages: List[dict], max_tokens: int | None = None) -> str:
         url = f"{self.api_base}/chat/completions"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        payload = {
-            "model": self.model,
-            "messages": self._truncate_messages(messages),
-            "temperature": 0.2,
-            "max_tokens": max_tokens or self.max_tokens,
-        }
+        budget = max_tokens or self.max_tokens
 
         last_err: Exception | None = None
         for attempt in range(self.max_retries):
+            payload = {
+                "model": self.model,
+                "messages": self._truncate_messages(messages),
+                "temperature": 0.2,
+                "max_tokens": budget,
+            }
             try:
                 resp = self.httpx.post(url, headers=headers, json=payload, timeout=self.timeout)
             except Exception as exc:
@@ -45,16 +49,38 @@ class OpenAICompatClient:
                 last_err = LLMError(f"LLM API 错误 {resp.status_code}：{resp.text[:500]}")
                 time.sleep(1.0 * (attempt + 1))
                 continue
+
             data = resp.json()
             try:
-                content = data["choices"][0]["message"]["content"]
+                choice = data["choices"][0]
+                message = choice["message"]
+                content = message.get("content")
+                finish_reason = choice.get("finish_reason")
+                reasoning = message.get("reasoning_content") or ""
             except (KeyError, IndexError, TypeError) as exc:
                 last_err = exc
                 time.sleep(1.0 * (attempt + 1))
                 continue
+
             if content and content.strip():
                 return content
-            last_err = LLMError("LLM 返回空内容")
+
+            # 空内容分两种情况，必须区分开（否则会把"预算不足"误判成"模型抽风"）：
+            #  - finish_reason == "length"：max_tokens 被 reasoning 吃光，翻倍重试
+            #  - 其它：真正的空返回，按原样重试
+            if finish_reason == "length" and budget < self.MAX_TOKEN_CEILING:
+                last_err = LLMError(
+                    f"LLM 因 max_tokens={budget} 不足被截断（reasoning 输出 {len(reasoning)} 字符），"
+                    "已自动提高预算重试"
+                )
+                budget = min(budget * 2, self.MAX_TOKEN_CEILING)
+                time.sleep(1.0 * (attempt + 1))
+                continue
+
+            last_err = LLMError(
+                f"LLM 返回空内容（finish_reason={finish_reason}, max_tokens={budget}, "
+                f"reasoning={len(reasoning)} 字符）"
+            )
             time.sleep(1.0 * (attempt + 1))
 
         raise LLMError(f"LLM 调用失败：{last_err}") from last_err

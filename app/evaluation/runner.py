@@ -31,7 +31,14 @@ def run_evaluation(rag_service, test_set_path: Optional[str] = None, top_k: Opti
 
     results = []
     for item in test_set:
-        answer, sources = rag_service.answer(question=item["question"], top_k=top_k)
+        # 逐题捕获异常：47 题的批量化评测里，单次 LLM 抖动不该让整轮评测崩掉。
+        # 失败题记为不正确并保留原因，便于事后定位是"答错"还是"没答"。
+        error = ""
+        try:
+            answer, sources = rag_service.answer(question=item["question"], top_k=top_k)
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            answer, sources = "", []
 
         answerable = bool(item.get("answerable", True))
         expected_keywords = item.get("expected_keywords") or []
@@ -66,6 +73,7 @@ def run_evaluation(rag_service, test_set_path: Optional[str] = None, top_k: Opti
                 "source_hit": source_hit,
                 "refusal_hit": refusal_hit,
                 "correct": correct,
+                "error": error,
                 "sources": [s.document_name for s in sources],
             }
         )
@@ -82,6 +90,7 @@ def run_evaluation(rag_service, test_set_path: Optional[str] = None, top_k: Opti
         "total": len(results),
         "answerable_count": len(answerable),
         "non_answerable_count": len(non_answerable),
+        "error_count": sum(1 for r in results if r["error"]),
         "keyword_accuracy": _acc(answerable, "keyword_hit"),
         "source_accuracy": _acc(answerable, "source_hit"),
         "refusal_accuracy": _acc(non_answerable, "refusal_hit"),

@@ -1,6 +1,10 @@
-# 开发环境：完整依赖 + 测试工具
+# Development environment: full dependency set plus test tooling.
 #
-# 只跑离线测试时可改用 requirements-ci.txt（体积小得多，不需要 torch / chromadb）：
+# For offline tests only, requirements-ci.txt is much lighter
+# (no torch / chromadb):
 #   pip install -r requirements-ci.txt
 -r requirements.txt
 pytest>=8.0
+pip-audit>=2.7
+
+# NOTE: keep this file ASCII-only (see requirements.txt).

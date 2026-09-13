@@ -3,20 +3,24 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 python-multipart>=0.0.9
 
-# 配置与请求
+# Config & HTTP
 python-dotenv>=1.0
 httpx>=0.27
 
-# 文档解析（.md 按纯文本读取，不需要 markdown 库）
+# Document parsing (.md is read as plain text, so the markdown lib is not needed)
 pypdf>=4.0
 python-docx>=1.1
 
-# RAG（默认生产组件，较大；离线回退组件 hash / memory / fake 不需要它们）
+# RAG defaults (heavy; the offline fallbacks hash / memory / fake do not need them)
 chromadb>=0.5
 sentence-transformers>=3.0
 
-# 数据库
+# Database
 pymysql>=1.1
 
-# 鉴权
+# Auth
 PyJWT>=2.8
+
+# NOTE: keep this file ASCII-only. pip-audit (pip_requirements_parser) decodes
+# BOM-less files with the locale codec -- cp936 on a zh-CN Windows -- so non-ASCII
+# comments raise UnicodeDecodeError and break dependency auditing.

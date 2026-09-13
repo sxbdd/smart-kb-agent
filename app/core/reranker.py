@@ -28,7 +28,10 @@ class CrossEncoderReranker:
 
     def rerank(self, question: str, results: List[SearchResult], top_k: int) -> List[SearchResult]:
         pairs = [(question, r.document) for r in results]
-        scores = self.model.predict(pairs)
+        try:
+            scores = self.model.predict(pairs, show_progress_bar=False)  # 关掉进度条，避免污染服务日志
+        except TypeError:  # 兼容不同版本的 predict 签名
+            scores = self.model.predict(pairs)
         ordered = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
         return [r for r, _ in ordered[:top_k]]
 

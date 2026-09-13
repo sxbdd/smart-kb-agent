@@ -61,7 +61,7 @@ class Settings:
     llm_api_base: str = field(default_factory=lambda: _env("LLM_API_BASE", "https://api.deepseek.com/v1"))
     llm_api_key: str = field(default_factory=lambda: _env("LLM_API_KEY", ""))
     llm_model: str = field(default_factory=lambda: _env("LLM_MODEL", "deepseek-v4-flash"))
-    llm_max_tokens: int = field(default_factory=lambda: _int("LLM_MAX_TOKENS", 1024))
+    llm_max_tokens: int = field(default_factory=lambda: _int("LLM_MAX_TOKENS", 4096))
 
     # Embedding（本地 sentence-transformers 默认；openai / hash 备选）
     embedding_provider: str = field(default_factory=lambda: _env("EMBEDDING_PROVIDER", "sentence-transformers"))
