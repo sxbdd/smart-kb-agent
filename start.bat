@@ -18,10 +18,11 @@ if not exist .venv (
     .venv\Scripts\python -m pip install --upgrade pip
     echo [2/3] 安装 torch CPU（首次较慢）...
     .venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-    echo [3/3] 安装其余依赖...
-    .venv\Scripts\python -m pip install -r requirements.txt
-    if errorlevel 1 ( echo 依赖安装失败 & pause & exit /b 1 )
 )
+
+echo [3/3] 检查并安装依赖...
+.venv\Scripts\python -m pip install -r requirements.txt
+if errorlevel 1 ( echo 依赖安装失败 & pause & exit /b 1 )
 
 if not exist .env (
     copy .env.example .env >nul
