@@ -1,43 +1,558 @@
 [
   {
-    "id": "q1",
+    "id": "q01",
+    "category": "fact",
     "question": "出差住宿标准是多少？",
     "answerable": true,
-    "expected_keywords": ["600", "450"],
+    "expected_keywords": [
+      "600",
+      "450"
+    ],
     "expected_source_doc": "员工考勤制度.txt",
     "reference": "一线城市600元，其他城市450元",
     "gold_evidence": "出差住宿标准：一线城市每晚不超过 600 元，其他城市不超过 450 元。"
   },
   {
-    "id": "q2",
+    "id": "q02",
+    "category": "fact",
+    "question": "一线城市出差住宿每晚最多多少钱？",
+    "answerable": true,
+    "expected_keywords": [
+      "600"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "600元",
+    "gold_evidence": "出差住宿标准：一线城市每晚不超过 600 元，其他城市不超过 450 元。"
+  },
+  {
+    "id": "q03",
+    "category": "fact",
+    "question": "其他城市出差住宿上限是多少？",
+    "answerable": true,
+    "expected_keywords": [
+      "450"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "450元",
+    "gold_evidence": "出差住宿标准：一线城市每晚不超过 600 元，其他城市不超过 450 元。"
+  },
+  {
+    "id": "q04",
+    "category": "fact",
     "question": "年假有几天？",
     "answerable": true,
-    "expected_keywords": ["5", "10"],
+    "expected_keywords": [
+      "5",
+      "10"
+    ],
     "expected_source_doc": "员工考勤制度.txt",
-    "reference": "入职满1年5天，满5年10天",
+    "reference": "满1年5天，满5年10天",
     "gold_evidence": "年假：入职满 1 年享 5 天年假，满 5 年享 10 天年假。"
   },
   {
-    "id": "q3",
-    "question": "上班时间是几点到几点？",
+    "id": "q05",
+    "category": "fact",
+    "question": "入职满一年可以休多少天年假？",
     "answerable": true,
-    "expected_keywords": ["9:00", "18:00"],
+    "expected_keywords": [
+      "5"
+    ],
     "expected_source_doc": "员工考勤制度.txt",
-    "reference": "9:00-18:00",
-    "gold_evidence": "上班时间：周一至周五 9:00-18:00。"
+    "reference": "5天",
+    "gold_evidence": "年假：入职满 1 年享 5 天年假，满 5 年享 10 天年假。"
   },
   {
-    "id": "q4",
+    "id": "q06",
+    "category": "fact",
+    "question": "入职满五年年假有多少天？",
+    "answerable": true,
+    "expected_keywords": [
+      "10"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "10天",
+    "gold_evidence": "年假：入职满 1 年享 5 天年假，满 5 年享 10 天年假。"
+  },
+  {
+    "id": "q07",
+    "category": "fact",
+    "question": "上班时间是几点到几点？",
+    "answerable": true,
+    "expected_keywords": [
+      "9:00",
+      "18:00"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "9:00-18:00",
+    "gold_evidence": "上班时间：周一至周五 9:00-18:00，午休 12:00-13:00。"
+  },
+  {
+    "id": "q08",
+    "category": "fact",
+    "question": "午休时间是什么时候？",
+    "answerable": true,
+    "expected_keywords": [
+      "12:00",
+      "13:00"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "12:00-13:00",
+    "gold_evidence": "上班时间：周一至周五 9:00-18:00，午休 12:00-13:00。"
+  },
+  {
+    "id": "q09",
+    "category": "fact",
     "question": "市内交通费怎么报销？",
     "answerable": true,
-    "expected_keywords": ["实报实销"],
+    "expected_keywords": [
+      "实报实销"
+    ],
     "expected_source_doc": "员工考勤制度.txt",
-    "reference": "凭票实报实销，单日上限100元",
+    "reference": "凭票实报实销",
     "gold_evidence": "市内交通费：凭票实报实销，单日上限 100 元。"
   },
   {
-    "id": "q5",
+    "id": "q10",
+    "category": "fact",
+    "question": "市内交通费单日上限是多少？",
+    "answerable": true,
+    "expected_keywords": [
+      "100"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "100元",
+    "gold_evidence": "市内交通费：凭票实报实销，单日上限 100 元。"
+  },
+  {
+    "id": "q11",
+    "category": "fact",
+    "question": "加班餐补能报销多少钱？",
+    "answerable": true,
+    "expected_keywords": [
+      "30"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "30元",
+    "gold_evidence": "加班餐补：工作日加班超过 20:00 可报销 30 元餐补。"
+  },
+  {
+    "id": "q12",
+    "category": "fact",
+    "question": "加班到几点才能报销餐补？",
+    "answerable": true,
+    "expected_keywords": [
+      "20:00"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "超过20:00",
+    "gold_evidence": "加班餐补：工作日加班超过 20:00 可报销 30 元餐补。"
+  },
+  {
+    "id": "q13",
+    "category": "fact",
+    "question": "公司有哪些补充福利？",
+    "answerable": true,
+    "expected_keywords": [
+      "团建",
+      "体检"
+    ],
+    "expected_source_doc": "员工福利制度.docx",
+    "reference": "团建、体检、生日礼品卡",
+    "gold_evidence": "补充福利：每月团建活动，每年一次体检，生日发放 200 元礼品卡。"
+  },
+  {
+    "id": "q14",
+    "category": "fact",
+    "question": "员工多久体检一次？",
+    "answerable": true,
+    "expected_keywords": [
+      "每年"
+    ],
+    "expected_source_doc": "员工福利制度.docx",
+    "reference": "每年一次",
+    "gold_evidence": "补充福利：每月团建活动，每年一次体检，生日发放 200 元礼品卡。"
+  },
+  {
+    "id": "q15",
+    "category": "fact",
+    "question": "生日有什么福利？",
+    "answerable": true,
+    "expected_keywords": [
+      "200",
+      "礼品卡"
+    ],
+    "expected_source_doc": "员工福利制度.docx",
+    "reference": "200元礼品卡",
+    "gold_evidence": "补充福利：每月团建活动，每年一次体检，生日发放 200 元礼品卡。"
+  },
+  {
+    "id": "q16",
+    "category": "fact",
+    "question": "团建活动多久组织一次？",
+    "answerable": true,
+    "expected_keywords": [
+      "每月"
+    ],
+    "expected_source_doc": "员工福利制度.docx",
+    "reference": "每月一次",
+    "gold_evidence": "补充福利：每月团建活动，每年一次体检，生日发放 200 元礼品卡。"
+  },
+  {
+    "id": "q17",
+    "category": "fact",
+    "question": "新员工入职培训需要在多久内完成？",
+    "answerable": true,
+    "expected_keywords": [
+      "30"
+    ],
+    "expected_source_doc": "员工培训管理制度.txt",
+    "reference": "入职后30天内",
+    "gold_evidence": "入职后 30 天内完成，由人力资源部统一组织，内容包括公司概况、规章制度与岗位职责。"
+  },
+  {
+    "id": "q18",
+    "category": "fact",
+    "question": "培训考核没有通过怎么办？",
+    "answerable": true,
+    "expected_keywords": [
+      "补考"
+    ],
+    "expected_source_doc": "员工培训管理制度.txt",
+    "reference": "30天内可补考一次",
+    "gold_evidence": "培训结束后 7 天内完成考核。未通过者可在 30 天内补考一次，补考仍未通过的，当年度不再安排同类外部培训。"
+  },
+  {
+    "id": "q19",
+    "category": "fact",
+    "question": "单次培训费用多少以内由部门负责人审批？",
+    "answerable": true,
+    "expected_keywords": [
+      "2000"
+    ],
+    "expected_source_doc": "员工培训管理制度.txt",
+    "reference": "不超过2000元",
+    "gold_evidence": "单次费用不超过 2000 元的，由部门负责人审批；超过 2000 元的，需总经理审批。"
+  },
+  {
+    "id": "q20",
+    "category": "fact",
+    "question": "年度技能培训每年安排几次？",
+    "answerable": true,
+    "expected_keywords": [
+      "2"
+    ],
+    "expected_source_doc": "员工培训管理制度.txt",
+    "reference": "不少于2次",
+    "gold_evidence": "每年不少于 2 次，每次不少于 4 学时，由各部门根据岗位需要制定计划。"
+  },
+  {
+    "id": "q21",
+    "category": "fact",
+    "question": "办公用品多久盘点一次？",
+    "answerable": true,
+    "expected_keywords": [
+      "季度"
+    ],
+    "expected_source_doc": "办公用品与设备管理办法.txt",
+    "reference": "每季度一次",
+    "gold_evidence": "每月 5 日前统一申领，行政部每季度盘点一次库存并公示。"
+  },
+  {
+    "id": "q22",
+    "category": "fact",
+    "question": "单价多少以下的办公用品由行政部直接审批？",
+    "answerable": true,
+    "expected_keywords": [
+      "500"
+    ],
+    "expected_source_doc": "办公用品与设备管理办法.txt",
+    "reference": "500元以下",
+    "gold_evidence": "单价 500 元以下的办公用品，由行政部直接审批；500 元及以上的，需分管副总审批。"
+  },
+  {
+    "id": "q23",
+    "category": "fact",
+    "question": "笔记本电脑等固定资产离职时需要做什么？",
+    "answerable": true,
+    "expected_keywords": [
+      "归还"
+    ],
+    "expected_source_doc": "办公用品与设备管理办法.txt",
+    "reference": "离职时须归还",
+    "gold_evidence": "笔记本电脑、显示器等固定资产领用后由使用人负责保管，离职时须归还；损坏或遗失的，按折旧价赔偿。"
+  },
+  {
+    "id": "q24",
+    "category": "fact",
+    "question": "办公用品领用需要谁签字？",
+    "answerable": true,
+    "expected_keywords": [
+      "部门负责人"
+    ],
+    "expected_source_doc": "办公用品与设备管理办法.txt",
+    "reference": "部门负责人签字",
+    "gold_evidence": "填写《办公用品领用单》，经部门负责人签字后到行政部领取。"
+  },
+  {
+    "id": "q25",
+    "category": "fact",
+    "question": "出差结束后多久要提交报销单？",
+    "answerable": true,
+    "expected_keywords": [
+      "15"
+    ],
+    "expected_source_doc": "差旅与报销指引.txt",
+    "reference": "15个工作日内",
+    "gold_evidence": "出差结束后 15 个工作日内提交报销单，逾期需在备注中说明原因。"
+  },
+  {
+    "id": "q26",
+    "category": "fact",
+    "question": "报销金额超过多少需要财务负责人复核？",
+    "answerable": true,
+    "expected_keywords": [
+      "5000"
+    ],
+    "expected_source_doc": "差旅与报销指引.txt",
+    "reference": "超过5000元",
+    "gold_evidence": "单笔报销金额超过 5000 元的，需财务负责人复核。"
+  },
+  {
+    "id": "q27",
+    "category": "fact",
+    "question": "报销票据的抬头有什么要求？",
+    "answerable": true,
+    "expected_keywords": [
+      "抬头"
+    ],
+    "expected_source_doc": "差旅与报销指引.txt",
+    "reference": "抬头须与公司名称一致",
+    "gold_evidence": "报销须提供合法有效票据，票据抬头须与公司名称一致。"
+  },
+  {
+    "id": "q28",
+    "category": "fact",
+    "question": "出差住宿超出标准的部分由谁承担？",
+    "answerable": true,
+    "expected_keywords": [
+      "个人承担"
+    ],
+    "expected_source_doc": "差旅与报销指引.txt",
+    "reference": "由个人承担",
+    "gold_evidence": "住宿标准按《员工考勤制度》执行，超出部分由个人承担。"
+  },
+  {
+    "id": "q29",
+    "category": "fact",
+    "question": "试用期是多长时间？",
+    "answerable": true,
+    "expected_keywords": [
+      "试用期",
+      "3"
+    ],
+    "expected_source_doc": "新员工入职指引.txt",
+    "reference": "试用期3个月",
+    "gold_evidence": "试用期为 3 个月。转正需提交转正申请，并经部门负责人评估通过。"
+  },
+  {
+    "id": "q30",
+    "category": "fact",
+    "question": "入职当天需要提交什么材料？",
+    "answerable": true,
+    "expected_keywords": [
+      "离职证明"
+    ],
+    "expected_source_doc": "新员工入职指引.txt",
+    "reference": "含离职证明等材料",
+    "gold_evidence": "请于入职当天将以下材料交至人力资源部：身份证复印件、学历证明、银行卡信息、上一份工作的离职证明、近期一寸照片两张。"
+  },
+  {
+    "id": "q31",
+    "category": "fact",
+    "question": "转正需要做什么？",
+    "answerable": true,
+    "expected_keywords": [
+      "转正申请"
+    ],
+    "expected_source_doc": "新员工入职指引.txt",
+    "reference": "提交转正申请",
+    "gold_evidence": "试用期为 3 个月。转正需提交转正申请，并经部门负责人评估通过。"
+  },
+  {
+    "id": "q32",
+    "category": "multi_fact",
+    "question": "出差住宿标准和市内交通费上限分别是多少？",
+    "answerable": true,
+    "expected_keywords": [
+      "600",
+      "100"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "住宿600元，交通费上限100元",
+    "gold_evidence": "出差住宿标准：一线城市每晚不超过 600 元，其他城市不超过 450 元。市内交通费：凭票实报实销，单日上限 100 元。"
+  },
+  {
+    "id": "q33",
+    "category": "multi_fact",
+    "question": "上班时间和午休时间分别是几点？",
+    "answerable": true,
+    "expected_keywords": [
+      "9:00",
+      "12:00"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "9:00-18:00 上班，12:00-13:00 午休",
+    "gold_evidence": "上班时间：周一至周五 9:00-18:00，午休 12:00-13:00。"
+  },
+  {
+    "id": "q34",
+    "category": "multi_fact",
+    "question": "年假和加班餐补分别是怎么规定的？",
+    "answerable": true,
+    "expected_keywords": [
+      "5",
+      "30"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "年假5/10天，餐补30元",
+    "gold_evidence": "年假：入职满 1 年享 5 天年假，满 5 年享 10 天年假。加班餐补：工作日加班超过 20:00 可报销 30 元餐补。"
+  },
+  {
+    "id": "q35",
+    "category": "paraphrase",
+    "question": "出差去一线城市，住宿一晚最多能报多少？",
+    "answerable": true,
+    "expected_keywords": [
+      "600"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "600元",
+    "gold_evidence": "出差住宿标准：一线城市每晚不超过 600 元，其他城市不超过 450 元。"
+  },
+  {
+    "id": "q36",
+    "category": "paraphrase",
+    "question": "关于请假，年假是怎么规定的？",
+    "answerable": true,
+    "expected_keywords": [
+      "5",
+      "10"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "满1年5天，满5年10天",
+    "gold_evidence": "年假：入职满 1 年享 5 天年假，满 5 年享 10 天年假。"
+  },
+  {
+    "id": "q37",
+    "category": "paraphrase",
+    "question": "中午休息是几点到几点？",
+    "answerable": true,
+    "expected_keywords": [
+      "12:00",
+      "13:00"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "12:00-13:00",
+    "gold_evidence": "上班时间：周一至周五 9:00-18:00，午休 12:00-13:00。"
+  },
+  {
+    "id": "q38",
+    "category": "paraphrase",
+    "question": "在市内产生的交通费怎么报销？",
+    "answerable": true,
+    "expected_keywords": [
+      "实报实销"
+    ],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "凭票实报实销",
+    "gold_evidence": "市内交通费：凭票实报实销，单日上限 100 元。"
+  },
+  {
+    "id": "q39",
+    "category": "paraphrase",
+    "question": "试用期结束转正要走什么流程？",
+    "answerable": true,
+    "expected_keywords": [
+      "转正申请"
+    ],
+    "expected_source_doc": "新员工入职指引.txt",
+    "reference": "提交转正申请",
+    "gold_evidence": "试用期为 3 个月。转正需提交转正申请，并经部门负责人评估通过。"
+  },
+  {
+    "id": "q40",
+    "category": "refusal",
     "question": "公司年会抽奖的一等奖奖品是什么？",
+    "answerable": false,
+    "expected_keywords": [],
+    "expected_source_doc": "",
+    "reference": "知识库无此信息，应拒答",
+    "gold_evidence": ""
+  },
+  {
+    "id": "q41",
+    "category": "refusal",
+    "question": "公司有股权激励计划吗？员工怎么参与？",
+    "answerable": false,
+    "expected_keywords": [],
+    "expected_source_doc": "",
+    "reference": "知识库无此信息，应拒答",
+    "gold_evidence": ""
+  },
+  {
+    "id": "q42",
+    "category": "refusal",
+    "question": "员工可以申请远程办公吗？",
+    "answerable": false,
+    "expected_keywords": [],
+    "expected_source_doc": "",
+    "reference": "知识库无此信息，应拒答",
+    "gold_evidence": ""
+  },
+  {
+    "id": "q43",
+    "category": "refusal",
+    "question": "年终奖是怎么计算的？",
+    "answerable": false,
+    "expected_keywords": [],
+    "expected_source_doc": "",
+    "reference": "知识库无此信息，应拒答",
+    "gold_evidence": ""
+  },
+  {
+    "id": "q44",
+    "category": "refusal",
+    "question": "公司为员工购买的商业保险保额是多少？",
+    "answerable": false,
+    "expected_keywords": [],
+    "expected_source_doc": "",
+    "reference": "知识库无此信息，应拒答",
+    "gold_evidence": ""
+  },
+  {
+    "id": "q45",
+    "category": "refusal",
+    "question": "出差可以乘坐头等舱吗？",
+    "answerable": false,
+    "expected_keywords": [],
+    "expected_source_doc": "",
+    "reference": "知识库无此信息，应拒答",
+    "gold_evidence": ""
+  },
+  {
+    "id": "q46",
+    "category": "refusal",
+    "question": "年假没休完可以折算成工资吗？",
+    "answerable": false,
+    "expected_keywords": [],
+    "expected_source_doc": "",
+    "reference": "知识库无此信息，应拒答",
+    "gold_evidence": ""
+  },
+  {
+    "id": "q47",
+    "category": "refusal",
+    "question": "公司目前一共有多少名员工？",
     "answerable": false,
     "expected_keywords": [],
     "expected_source_doc": "",
