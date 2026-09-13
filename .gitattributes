@@ -1,0 +1,2 @@
+# Windows 批处理脚本：强制 CRLF 行尾（否则 cmd 解析括号块会出错）
+*.bat text eol=crlf
