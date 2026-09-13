@@ -1,7 +1,6 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-set HF_ENDPOINT=https://hf-mirror.com
 set PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 
 where python >nul 2>nul
@@ -29,6 +28,16 @@ if not exist .env (
     echo [提示] 已生成 .env，请填入 LLM_API_KEY 与 MYSQL_PASSWORD 后重新运行本脚本。
     pause
     exit /b 0
+)
+
+:: BGE 模型缓存检测：已缓存 -> 完全离线秒开；未缓存 -> 走国内镜像下载
+if exist "%USERPROFILE%\.cache\huggingface\hub\models--BAAI--bge-small-zh-v1.5" (
+    set HF_HUB_OFFLINE=1
+    set TRANSFORMERS_OFFLINE=1
+    echo [提示] 已检测到本地 BGE 模型，离线秒开（不访问 HuggingFace）
+) else (
+    set HF_ENDPOINT=https://hf-mirror.com
+    echo [提示] 首次运行：将从国内镜像下载 BGE 模型（约 100MB，仅此一次）
 )
 
 echo 启动服务：http://127.0.0.1:8000/
