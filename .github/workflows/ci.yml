@@ -53,3 +53,26 @@ jobs:
           python-version: "3.12"
       - name: scripts/ 语法检查
         run: python -m compileall -q scripts
+
+  audit:
+    name: 依赖漏洞扫描
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装 pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+
+      # 测试/CI 依赖集：面小、可控，发现漏洞直接阻断。
+      - name: 审计 CI 依赖集（阻断）
+        run: python -m pip_audit -r requirements-ci.txt --strict
+
+      # 生产依赖集包含 chromadb / torch 等重型传递依赖，漏洞通常需上游修复，
+      # 因此只做提示不阻断，避免 CI 因第三方问题长期变红。
+      - name: 审计生产依赖集（仅提示）
+        continue-on-error: true
+        run: python -m pip_audit -r requirements.txt
