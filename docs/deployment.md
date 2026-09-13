@@ -76,6 +76,9 @@ start.bat
 | 上传返回 413 | 超过 `MAX_UPLOAD_MB`（默认 20MB） |
 | 浏览器报 `ERR_CONNECTION_REFUSED` | 浏览器在服务就绪前就打开了。**现已修复**：`start.bat` 会等 `/healthz` 就绪再开（见 §4）。若仍遇到，看 `data/startup.log` 确认等待器是否在跑；手动打开时先等启动窗口出现 `Application startup complete` |
 | 日志里 `GET /favicon.ico 404` | 前端已用 `<link rel="icon" href="data:,">` 阻止浏览器请求；若仍有 404 属浏览器直连测试，可忽略 |
+| 报 `LLM 调用失败：LLM 返回空内容` | **推理类模型（如 deepseek-v4-flash）会先输出 `reasoning_content`**，`LLM_MAX_TOKENS` 给小了会被思考吃光、`content` 为空且 `finish_reason=length`。客户端已会自动加倍预算重试，但仍建议 `LLM_MAX_TOKENS>=4096` |
+| 评测整体失败 | 旧版本单题 LLM 抖动会中断整轮评测；现已逐题捕获并计入 `error_count`，看返回里的 `error_count` 与逐题 `error` 字段定位 |
+| `pip-audit` 报 `UnicodeDecodeError` | requirements 文件里出现了非 ASCII 注释（该工具按本地代码页解码无 BOM 文件）。**保持 requirements 系列纯 ASCII** |
 
 ## 7. 已知限制
 
@@ -84,3 +87,17 @@ start.bat
 | 限流是**进程内**实现 | 多副本部署时各副本独立计数，需要换成 Redis 等共享存储 |
 | 单租户 | 所有登录用户共享同一知识库；路由里的 `user_id` 只用于鉴权，不做数据隔离（ADR-009） |
 | 无迁移工具 | 建表用 `CREATE TABLE IF NOT EXISTS`，加字段需手工处理或引入 Alembic |
+| 并发能力有限 | 实测 4 并发后吞吐见顶（约 144 QPS），延迟随并发线性上涨；瓶颈是 CPU 上的查询向量化 |
+| `chromadb` 有 5 个未修复漏洞 | `pip-audit` 报出且上游无修复版本；CI 的生产依赖集审计仅提示不阻断 |
+| Rerank 默认关闭 | 实测 Recall@3 两组均 100%，首命中 +2.6pp 但延迟 133× → 维持关闭（ADR-011）；需要时设 `ENABLE_RERANK=true` |
+
+## 8. 运维脚本速查
+
+| 脚本 | 用途 | 是否调用 LLM |
+| --- | --- | --- |
+| `scripts/init_env.py` | 生成 `.env` 并写入随机 `JWT_SECRET` | 否 |
+| `scripts/rebuild_kb.py` | 清空并重建知识库语料（自动备份） | 否 |
+| `scripts/open_when_ready.py` | 等 `/healthz` 就绪后再开浏览器 | 否 |
+| `scripts/run_evaluation.py` | 跑评测（`--repeat` 看稳定性、`--details` 看逐题） | **是** |
+| `scripts/rerank_ab.py` | Rerank A/B：排序质量 + 延迟 | 否 |
+| `scripts/benchmark.py` | 检索/并发性能基准（`--with-llm` 才测问答） | 否（默认） |

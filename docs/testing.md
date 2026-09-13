@@ -18,11 +18,12 @@
 
 ## 2. 分层策略
 
-`114 个测试函数 → 144 个用例`（参数化展开后）：离线 **140 passed** + 真实环境 **4 skipped**。
+`122 个测试函数 → 152 个用例`（参数化展开后）：离线 **148 passed** + 真实环境 **4 skipped**。
 
 | 层 | 文件 | 用例数 | 依赖 | 目标 | 反馈速度 |
 | --- | --- | --- | --- | --- | --- |
 | L1 冒烟 | `test_smoke.py` | 4 | 无 | 应用可创建、健康检查、静态资源、路由齐备 | <1s |
+| L1 单元 | `test_llm_client.py` | 8 | 无（桩 HTTP） | 空返回、**推理模型 token 截断**、重试与预算加倍 | <1s |
 | L1 单元 | `test_router.py` | 19 | 无 | 意图规则矩阵、LLM 分类开关与降级 | <1s |
 | L1 单元 | `test_tools.py` | 18 | 内存向量库 | 计算器 AST 沙箱、工具注册表、检索行为 | <1s |
 | L1 单元 | `test_parser_splitter.py` | 20 | 无 | 解析（txt/md/docx/**pdf**/编码/损坏文件）与切分边界 | <1s |
@@ -41,7 +42,7 @@
 
 ```powershell
 # ---- 离线（默认）----
-.venv\Scripts\python -m pytest                 # 140 passed, 4 skipped
+.venv\Scripts\python -m pytest                 # 148 passed, 4 skipped
 
 # ---- 只装离线测试所需的最小依赖（不需要 torch / chromadb，约 20MB）----
 .venv\Scripts\python -m pip install -r requirements-ci.txt
@@ -56,6 +57,15 @@
 $env:RUN_INTEGRATION=1
 .venv\Scripts\python -m pytest tests\test_integration_real.py -v -s
 $env:RUN_INTEGRATION=$null
+
+# ---- 评测基线（调用 LLM，有费用；结果写入 evaluation_runs）----
+.venv\Scripts\python scripts\run_evaluation.py --repeat 2 --details
+
+# ---- Rerank A/B：排序质量 + 延迟（零费用，不调用 LLM）----
+.venv\Scripts\python scripts\rerank_ab.py --candidates 5 --final 3
+
+# ---- 检索/并发性能基准（零费用；加 --with-llm 才测端到端问答）----
+.venv\Scripts\python scripts\benchmark.py --queries 39 --concurrency 1,4,8
 ```
 
 CI：`.github/workflows/ci.yml`，push / PR 时在 **Python 3.10 与 3.12** 上跑 `compileall` + 离线套件。
@@ -113,7 +123,7 @@ CI：`.github/workflows/ci.yml`，push / PR 时在 **Python 3.10 与 3.12** 上�
 | `test_knowledge_search_returns_indexed_chunk_with_filename` | 命中时带文件名与原文（引用溯源基础） |
 | `test_knowledge_search_has_no_score_threshold` | **记录已知行为**：检索只做 top-k、无相似度截断，拒答依赖 Prompt（见 §9） |
 
-### L1 单元 `test_parser_splitter.py`（13）
+### L1 单元 `test_parser_splitter.py`（20）
 | 用例 | 守护 |
 | --- | --- |
 | `test_short_text_is_one_chunk` | 短文不切碎 |
@@ -189,7 +199,7 @@ CI：`.github/workflows/ci.yml`，push / PR 时在 **Python 3.10 与 3.12** 上�
 | `test_delete_conversation_also_removes_messages` | **孤儿消息回归**：删除会话后 `count_orphan_messages()==0` |
 | `test_delete_unknown_conversation_404` | 删不存在的会话 → 404 |
 
-### L3 接口 `test_upload.py`（9）
+### L3 接口 `test_upload.py`（10）
 | 用例 | 守护 |
 | --- | --- |
 | `test_upload_txt_creates_index` | 上传 txt → 入库并出现在 `/documents` |
@@ -202,7 +212,7 @@ CI：`.github/workflows/ci.yml`，push / PR 时在 **Python 3.10 与 3.12** 上�
 | `test_delete_document` / `test_delete_unknown_document_404` | 删除文档与 404 |
 | `test_upload_corrupt_pdf_400_not_500` | 损坏 PDF 走完整接口返回 **400**（不是 500）；同一用例顺带验证正常 PDF 能入库 |
 
-### L3 接口 `test_evaluation.py`（11）
+### L3 接口 `test_evaluation.py`（19）
 | 用例 | 守护 |
 | --- | --- |
 | `test_default_test_set_exists` | 默认测试集存在且名为 `test_set_smart.json`（**原 bug：指向不存在的 test_set.json**） |
@@ -224,6 +234,18 @@ CI：`.github/workflows/ci.yml`，push / PR 时在 **Python 3.10 与 3.12** 上�
 | `test_refusal_items_declare_no_source_or_keywords` | 拒答题不得声明来源/关键词 |
 | `test_every_corpus_document_is_cited_by_some_question` | 每个语料文档都要有题引用（否则等于白灌） |
 | `test_gold_evidence_really_exists_in_its_corpus_file` | **`gold_evidence` 必须能在对应语料文件里逐句找到** —— 防出题时凭空编造事实 |
+
+### L1 单元 `test_llm_client.py`（8）
+| 用例 | 守护 |
+| --- | --- |
+| `test_truncated_then_ok_retries_with_doubled_budget` | **被 `finish_reason=length` 截断时自动加倍预算重试**（推理模型的核心坑） |
+| `test_doubling_is_capped_at_ceiling` | 预算封顶 `MAX_TOKEN_CEILING`，不会无限膨胀 |
+| `test_truncation_error_message_is_actionable` | 失败信息含 max_tokens / 截断，可定位到配置 |
+| `test_empty_without_length_does_not_inflate_budget` | 真正的空返回**不**无脑翻倍 |
+| `test_api_error_retries_then_raises_with_status` | 非 200 重试后带状态码抛错 |
+| `test_malformed_payload_is_retried_not_crashed` | 返回体结构异常不崩，重试可恢复 |
+| `test_default_budget_is_generous_enough_for_reasoning_models` | 默认预算 ≥ 4096 |
+| `test_fake_client_is_deterministic` | 离线 FakeLLM 行为稳定 |
 
 ### L1 脚本 `test_open_when_ready.py`（4）
 | 用例 | 守护 |
@@ -324,19 +346,24 @@ curl -X POST http://127.0.0.1:8000/evaluation/run -H "Authorization: Bearer <TOK
   所以 `source_accuracy` 现在能真正反映检索质量，而不是"只有一个文档必然命中"；
 - 记录方式：每次跑完把 `total / keyword_accuracy / source_accuracy / refusal_accuracy / overall_accuracy` 与当时的配置一起记下来（`/evaluation/runs` 或 `evaluation_runs` 表已有历史）。
 
-### 6.6 Rerank A/B 复测（ADR-011 待更新）
+### 6.6 Rerank A/B（已实测，结论见 ADR-011）
 
-ADR-011 的结论（"Noop 与 bge-reranker-base 持平 → V1 不启用"）建立在"**单文档单 chunk，重排无发挥空间**"的前提上。当前语料已变化，前提需要重新验证：
+评测指标在两组上都已**饱和为 100%**，因此 A/B 不能只看评测 —— 要用**有区分度的排序指标 + 延迟成本**：
 
 ```powershell
-# A 组
-$env:ENABLE_RERANK="false"; <重启服务>; <运行评测>;  记录四项指标
-# B 组
-$env:ENABLE_RERANK="true";  <重启服务>; <运行评测>;  记录四项指标
+# 排序质量与延迟对比（不调用 LLM，零费用）
+.venv\Scripts\python scripts\rerank_ab.py --candidates 5 --final 3 --json data/rerank_ab_prod.json
+
+# 若还想确认"开启重排不会让评测掉分"（会调用 47 次 LLM）
+$env:ENABLE_RERANK="true"; .venv\Scripts\python scripts\run_evaluation.py
 ```
 
-**语料已扩到 6 个文档（含 2 个近邻干扰），Rerank 现在有 6 个候选可比** —— 比原先"单文档单 chunk 无发挥空间"有意义得多，
-但每文档仍只有 1 个 chunk，**建议把语料写到千字级（拆成多 chunk）后再下结论**。做完后按 ADR 格式更新 `docs/decisions.md`。
+实测结果（2026-09-14）：Noop 与 bge-reranker-base 的 **Recall@3 均为 100%**，
+重排只把首命中从 92.3% 提到 94.9%（MRR +0.017），代价是检索延迟 **9.3ms → 1236ms（133×）**。
+→ **维持 `ENABLE_RERANK=false`**；完整判据与适用边界见 `docs/decisions.md` ADR-011。
+
+> 复测建议：重排的价值通常在**候选多、噪声大**时体现。语料扩到数百 chunk 后，
+> "候选集里是否还包含正确文档"会重新成为瓶颈，届时用同一脚本复测即可。
 
 ## 7. 验收标准
 
@@ -355,7 +382,7 @@ $env:ENABLE_RERANK="true";  <重启服务>; <运行评测>;  记录四项指标
 
 ```powershell
 .venv\Scripts\python -m compileall -q app tests scripts   # 语法
-.venv\Scripts\python -m pytest                            # 140 passed, 4 skipped
+.venv\Scripts\python -m pytest                            # 148 passed, 4 skipped
 .venv\Scripts\python scripts\rebuild_kb.py --dry-run      # 语料干净
 $env:RUN_INTEGRATION=1; .venv\Scripts\python -m pytest tests\test_integration_real.py -v
 <运行评测并记录基线指标>
@@ -381,11 +408,11 @@ $env:RUN_INTEGRATION=1; .venv\Scripts\python -m pytest tests\test_integration_re
 | 缺口 | 影响 | 备注 |
 | --- | --- | --- |
 | **检索无相似度阈值** | 全部片段不相关时仍返回 top-k，拒答完全依赖 Prompt 守规矩 | 已用 `test_knowledge_search_has_no_score_threshold` 固化行为；是否引入 `MIN_SCORE` 待评估 |
-| **语料仍偏小** | 6 个文档、每文档 1 chunk；指标只能说明"在此语料下的表现" | 测试集已扩到 47 题并加干扰文档；再加语料建议写到千字级以拆出多 chunk |
-| **真实 LLM 非确定性** | 评测结果有波动，无多次重跑与置信区间 | 同一配置跑 2~3 次再判读 |
+| **语料仍偏小** | 6 文档 / 13 chunk；指标只能说明"在此语料下的表现"，不能外推 | 已加干扰文档并拆出多 chunk；继续扩容建议数百 chunk 量级 |
+| **真实 LLM 非确定性** | 已有 2 次重跑（极差 0.0pp），但无更多样本与置信区间 | 基线两次一致；改动后仍建议 ≥2 次 |
 | **无前端 E2E** | 只有静态断言（页面含某字符串），无浏览器级交互测试 | 未引入 Playwright；当前靠 §8 手工步骤 |
-| **无性能/并发测试** | 不知道大 `top_k`、多并发下的延迟与内存表现 | 无压测脚本 |
-| **无依赖漏洞扫描** | 第三方库风险未跟踪 | 可加 `pip-audit` 到 CI |
+| **并发能力有限** | 4 并发后吞吐见顶（~144 QPS），延迟线性上涨 | 已实测（§11）；瓶颈是 CPU 上的查询向量化，非 Chroma |
+| **`chromadb` 有 5 个未修复漏洞** | 生产依赖集存在已知风险，上游无修复版本 | CI 已加 `pip-audit`（生产集仅提示）；详见 §11 |
 | **限流是进程内实现** | 多副本部署时各副本独立计数，限流失效 | 需换 Redis 等共享存储 |
 | **单租户** | 无权限隔离，所有用户共享同一知识库 | ADR-009 有意为之 |
 | **无 DB 迁移工具** | 建表用 `CREATE TABLE IF NOT EXISTS`，加字段需手工 | 可引入 Alembic |
@@ -398,24 +425,69 @@ $env:RUN_INTEGRATION=1; .venv\Scripts\python -m pytest tests\test_integration_re
    并重建索引（`scripts/rebuild_kb.py`）—— §5 里 8 条一致性用例会守住这条；
 4. **新增配置项要配边界用例**（例如再引入上限类配置，就补"越界拒绝 + 边界值可用"两条）；
 5. **修 bug 先加失败用例**：先在 `tests/` 里复现，再改实现，用例留在套件里当回归防线（本套件里标记为"回归"的用例即此来源）；
-6. **不要用测试往真实知识库灌数据**：上传类用例一律走 `tmp_path`。
+6. **不要用测试往真实知识库灌数据**：上传类用例一律走 `tmp_path`；
+7. **requirements 系列文件保持纯 ASCII**：`pip-audit` 的解析器对无 BOM 文件按本地代码页（zh-CN 下是 cp936）解码，
+   中文注释会直接抛 `UnicodeDecodeError` 导致依赖审计失败（见 `requirements.txt` 末尾注释）。
 
-## 11. 附：历史验证记录与已修问题
+## 11. 附：验证记录与已修问题
 
-### 真实验证记录（V1 历史）
+### 真实验证记录 · V1 基线（2026-09-14，现行语料与测试集）
+
+语料 **6 文档 / 13 chunk**；测试集 **47 题**（可答 39 + 拒答 8）；`top_k=5`；
+同一配置**连跑 2 次**（`python scripts/run_evaluation.py --repeat 2`）：
+
+| 指标 | 第 1 次 | 第 2 次 | 极差 |
+| --- | --- | --- | --- |
+| `keyword_accuracy` | 100.0% | 100.0% | 0.0pp |
+| `source_accuracy` | 100.0% | 100.0% | 0.0pp |
+| `refusal_accuracy` | 100.0% | 100.0% | 0.0pp |
+| `overall_accuracy` | 100.0% | 100.0% | 0.0pp |
+
+- 39 道可答题：`keyword_hit=True` **且** `source_hit=True`（关键词全中、且引用了正确文档）；
+- 8 道越界题：全部正确拒答；
+- **`error_count = 0`**（无 LLM 调用失败）；
+- 落库记录见 `evaluation_runs`（3 条 `total=47`，含 rerank 开启的那次）。
+
+### Rerank A/B（同日，`scripts/rerank_ab.py`，候选 5 → 最终 3）
+
+| 指标 | Noop（现状） | bge-reranker-base | 变化 |
+| --- | --- | --- | --- |
+| Recall@1 | 92.3% | 94.9% | +2.6pp |
+| Recall@3（最终集合） | **100%** | **100%** | 0 |
+| MRR | 0.9573 | 0.9744 | +0.0171 |
+| 检索延迟（均值） | **9.3 ms** | **1236 ms** | **132.9×** |
+
+→ 维持 `ENABLE_RERANK=false`。判据与适用边界见 **ADR-011**；原始数据 `data/rerank_ab_prod.json`。
+
+### 检索性能（同日，`scripts/benchmark.py`，CPU 单进程）
+
+| 档位 | 延迟 mean | p95 | 吞吐 |
+| --- | --- | --- | --- |
+| 串行（39 次） | 8.3 ms | 9.9 ms | 120.7 QPS |
+| 并发 1 | 10.0 ms | 12.3 ms | 100.1 QPS |
+| 并发 4 | 27.4 ms | 31.0 ms | **143.9 QPS** |
+| 并发 8 | 56.2 ms | 76.2 ms | 138.0 QPS |
+
+→ **4 并发后吞吐见顶、延迟线性上涨**；瓶颈是查询向量化（bge，CPU 密集），不是 Chroma。
+端到端问答延迟另受 LLM 影响（单题实测约 1.7~7s，随答案长度波动）。
+
+### 依赖漏洞扫描（`pip-audit`，2026-09-14）
+
+| 范围 | 结果 |
+| --- | --- |
+| 测试/CI 依赖集 `requirements-ci.txt` | 无已知漏洞（CI 中为**阻断**任务）。注：本机经代理解析超时，该结论由已安装环境审计推出 |
+| 生产依赖集 `requirements.txt` | **9 个已知漏洞 / 2 个包**：`chromadb 1.5.9` 5 个（**均无修复版本**，上游问题）、`setuptools` 3 个（已升级本机到 84.0.0）。CI 中为**提示**任务 |
+| 另 | `torch 2.14.0+cpu` 因版本号不在 PyPI 而无法审计（跳过） |
+
+### V1 历史记录（语料污染时期，已失效，仅留档）
 
 | 项 | 结果 |
 | --- | --- |
-| RAG 问答 | 出差住宿标准 → 带引用正确回答 |
-| 拒答 | 知识库无答案 → "根据当前知识库，我无法回答这个问题" |
-| Router | chat / rag / agent 三路分类正确 |
-| Agent 计算器 | 100 * 1.08 = 108 |
-| 鉴权 | 无 token 401 / 带 token 200 |
-| 评测（5 题） | 关键词 100% · 来源 100% · 拒答 100% · 综合 100%（3 条历史记录见 `evaluation_runs`） |
+| 评测（5 题） | 关键词 100% · 来源 100% · 拒答 100% · 综合 100% |
 
-> ⚠️ 上述评测数字产生时，知识库被测试脚本上传的 `testing.md` / `decisions.md` 污染
-> （47 个 chunk 里 39 个与业务无关）。语料已于 2026-09-14 重建为干净标准语料
-> （`data/kb/`，共 2 个 chunk），**旧指标已失效，需按 §6 重新跑出基线**。
+> ⚠️ 这批数字产生时知识库被测试脚本上传的 `testing.md` / `decisions.md` 污染
+> （47 chunk 中 39 个与业务无关），且只有 5 题、2 个文档，**不具代表性**。
+> 已被上面的 47 题基线取代。
 
 ### 测试发现并修复的真实问题
 

@@ -28,11 +28,17 @@ FastAPI · RAG · Chroma · sentence-transformers(bge-small-zh) · Agent(ReAct) 
 
 ## 状态
 
-**V1 完成（P0 + P1）+ V1.1 审计整改**。
-V1.1 做了一轮以实际执行为依据的审计与整改：修掉 16 项缺陷、把测试从脚本升级为
-**144 个 pytest 用例 + CI**、重建了被测试污染的语料库，并把评测语料扩到
-**6 个文档（含 2 个近邻干扰）**、测试集扩到 **47 题**。详见
-[docs/review-v1-audit.md](docs/review-v1-audit.md) 与 [docs/change-log.md](docs/change-log.md)。
+**V1 完成（P0 + P1），并已完成 V1.1 审计整改与收尾验证。**
+
+- 修复 **20 项缺陷**（含跑基线时发现的 P0：`LLM_MAX_TOKENS=1024` 被推理模型思考吃光导致全线失败）；
+- 测试从 6 个脚本升级为 **13 个模块 / 152 个用例 + CI**（Python 3.10/3.12）+ `pip-audit` 依赖扫描；
+- 语料从被测试污染重建为 **6 个文档（含 2 个近邻干扰）/ 13 chunk**，评测集 **5 → 47 题**；
+- **评测基线**（连跑 2 次）：关键词 / 来源 / 拒答 / 综合 **均 100%，极差 0.0pp**；
+- **Rerank A/B**：Recall@3 两组均 100%，首命中 +2.6pp 但延迟 133× → **维持关闭**（ADR-011 已更新为实测结论）；
+- 检索性能：串行 8.3ms / 120.7 QPS，4 并发后吞吐见顶。
+
+详见 [docs/review-v1-audit.md](docs/review-v1-audit.md)、[docs/change-log.md](docs/change-log.md)、
+[docs/testing.md](docs/testing.md) §11（基线原始数据与复现命令）。
 
 ## 快速开始
 

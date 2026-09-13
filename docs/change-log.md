@@ -25,6 +25,7 @@
 | P0-1 | 评测默认测试集指向不存在的 `test_set.json`，不传参必 500 | 改为 `test_set_smart.json` + 回归用例 |
 | P0-2 | `test_real_rag.py` / `test_m3_agent.py` 缺鉴权头，必 401 | 整套脚本重构为 pytest 用例（见下） |
 | P0-3 | `pytest` 声明了但未安装，无 `conftest.py` | 安装 pytest + 独立 `requirements-ci.txt` + `conftest.py` 隔离 |
+| P0-4 | **跑基线时发现：`LLM_MAX_TOKENS=1024` 被推理模型的 `reasoning_content` 吃光，`content` 为空 → 客户端判定"空返回"重试同预算后抛错，RAG/对话/Agent 全线失败** | 客户端区分"被 `finish_reason=length` 截断"与"真·空返回"，前者自动加倍预算重试（封顶 8192）；默认预算 1024 → 4096；补 8 条 `test_llm_client.py` 用例 |
 | P1-1 | 删会话留下孤儿消息（实测 2 条） | 先删消息再删会话 + `messages` 加 `ON DELETE CASCADE` 外键 + `purge_orphan_messages()` |
 | P1-2 | 语料被 `testing.md`/`decisions.md` 污染（47 chunk 中 39 个无关） | 新增 `data/kb/` 标准语料 + `scripts/rebuild_kb.py`，已重建为 2 chunk |
 | P1-3 | `.env.example` 末行缺换行，`RERANK_MODEL` 从未生效 | 重写 `.env.example` |
@@ -41,41 +42,63 @@
 | P3-5 | `start.bat` 在服务监听端口前就打开浏览器 → 用户看到 `ERR_CONNECTION_REFUSED` | 新增 `scripts/open_when_ready.py`：轮询 `/healthz`，就绪后才开浏览器；超时弹提示并写 `data/startup.log` |
 | P3-6 | 浏览器请求 `/favicon.ico` 恒 404，污染启动日志 | 前端加 `<link rel="icon" href="data:,">` 阻止该请求 |
 | P3-7 | PDF/DOCX 损坏时抛未处理异常 → 接口 500 且无有用信息 | 解析器统一转 `AppError(400)`；PDF 加密单独提示；补 4 条损坏文件用例 |
+| P3-8 | 单题 LLM 失败会让整轮评测崩溃（47 题批量下不可接受） | `run_evaluation` 逐题捕获异常记为不正确，并输出 `error_count` |
+| P3-9 | requirements 文件里的中文注释使 `pip-audit` 抛 `UnicodeDecodeError`（无 BOM 时按 cp936 解码） | 三个 requirements 文件改为纯 ASCII，并注释说明原因 |
+| P3-10 | CrossEncoder 推理时打印进度条，污染服务日志 | `predict(..., show_progress_bar=False)` |
 
 ### 工程改造
 
 - `create_app` 从 `app/main.py` 抽到 `app/factory.py`，消除 `import app.main` 的容器副作用；
 - `Settings` 字段改为 `default_factory`，**实例化时**读环境，测试不再受 import 顺序影响；
-- 6 个脚本式测试重构为 **12 个测试模块 / 144 个用例**（140 离线 + 4 真实环境默认跳过），
+- 6 个脚本式测试重构为 **13 个测试模块 / 152 个用例**（148 离线 + 4 真实环境默认跳过），
   配 `FakeDatabase` + `tmp_path` 全离线隔离；
-- 新增 `.github/workflows/ci.yml`（Python 3.10 / 3.12）；
-- 新增 `scripts/init_env.py`、`scripts/rebuild_kb.py`、`scripts/open_when_ready.py`；
+- 新增 `.github/workflows/ci.yml`（Python 3.10 / 3.12）+ **`pip-audit` 依赖漏洞扫描任务**
+  （测试依赖集阻断、生产依赖集仅提示）；
+- 新增脚本：`init_env.py`、`rebuild_kb.py`、`open_when_ready.py`、
+  **`run_evaluation.py`**（命令行评测 + `--repeat` 稳定性）、
+  **`rerank_ab.py`**（排序质量 A/B）、**`benchmark.py`**（检索/并发压测）；
 - `docs/testing.md` 扩写为**完整测试方案**（分层策略、用例清单、评测方法、验收标准、已知缺口、维护规范）；
 - **补 PDF 解析用例**（用例内手工构造最小 PDF，零新增依赖），并顺带修掉"损坏 PDF/DOCX 抛未处理异常 → 500"；
 - **评测语料与测试集扩容**：语料 2 → **6 个文档**（含 2 个近邻干扰），测试集 5 → **47 题**
   （可答 39 + 拒答 8；分类 fact 31 / paraphrase 5 / multi_fact 3 / refusal 8），
   并新增 **8 条测试集一致性用例**守住"出处真实存在""关键词在 gold_evidence 中""不凭空编造事实"。
 
-### 验证结果
+### 验证结果（V1 收尾，2026-09-14）
 
 ```
-python -m pytest   →  140 passed, 4 skipped（8.6s）
+python -m pytest   →  148 passed, 4 skipped（8.8s）
 python -m compileall -q app tests scripts   →  exit 0
 ```
 
-### 遗留
+**评测基线**（6 文档 / 13 chunk；47 题；`top_k=5`；同一配置连跑 2 次）
 
-- **评测指标需重新运行**：语料已扩到 6 文档、测试集扩到 47 题，原先"5 题 100%"的证据链彻底失效，
-  必须按 `docs/testing.md` §6 重跑并记录基线；
-- **语料仍偏小**：6 文档、每文档 1 chunk。Rerank A/B 已具备 6 个候选可比，
-  但建议把语料写到千字级（拆出多 chunk）后再下结论并更新 ADR-011；
-- 检索无相似度阈值（top-k 必返回结果），拒答完全依赖 Prompt 约束 —— 是否需要 `MIN_SCORE` 待评估。
+| 指标 | 第 1 次 | 第 2 次 | 极差 |
+| --- | --- | --- | --- |
+| `keyword_accuracy` | 100.0% | 100.0% | 0.0pp |
+| `source_accuracy` | 100.0% | 100.0% | 0.0pp |
+| `refusal_accuracy` | 100.0% | 100.0% | 0.0pp |
+| `overall_accuracy` | 100.0% | 100.0% | 0.0pp |
+
+**Rerank A/B**：Recall@3 两组均 100%；首命中 92.3% → 94.9%（MRR +0.017），
+延迟 9.3ms → 1236ms（**133×**）→ **维持 `ENABLE_RERANK=false`**（ADR-011 已更新为实测结论）。
+
+**检索性能**（CPU 单进程）：串行 8.3ms / 120.7 QPS；并发 4 达 143.9 QPS 后**见顶**，延迟随并发线性上涨。
+
+**依赖审计**（`pip-audit`）：测试/CI 依赖集无已知漏洞；生产依赖集 9 个（`chromadb` 5 个**无修复版本**，`setuptools` 已升级）。
+
+### 遗留（V2）
+
+- 检索无相似度阈值（top-k 必返回结果），拒答完全依赖 Prompt 约束 —— 是否需要 `MIN_SCORE` 待评估；
+- 语料 6 文档 / 13 chunk，仍属小规模，指标**不可外推**；继续扩容到数百 chunk 时应重跑 Rerank A/B；
+- 并发 4 之后吞吐见顶（瓶颈是 CPU 上的查询向量化，不是 Chroma）；
+- `chromadb` 存在 5 个无修复版本的漏洞（上游问题，CI 仅提示）；
+- 前端无 E2E；单租户；限流为进程内实现；无 DB 迁移工具。
 
 ## 范围控制记录
 
 | 决策 | 依据 |
 | --- | --- |
-| Rerank 不预设启用 | A/B 实测持平（当时为单文档单 chunk）；语料已扩到 6 文档 / 47 题，**结论待重测**（ADR-011 已追记） |
+| Rerank 不预设启用 | 2026-09-14 复测：Recall@3 两组均 100%，首命中 +2.6pp 但延迟 133× → **维持关闭**（ADR-011 已更新为实测结论） |
 | 不做多租户/RBAC | V1 单租户定位，避免范围膨胀 |
 | 多轮对话列为 P1 | 核心 RAG 先行，多轮后置 |
 | V1.1 只做"恢复可信度 + 补边界"，不扩功能 | 审计结论：短板在可验证性与健壮性，不在功能 |
