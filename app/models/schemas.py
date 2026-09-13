@@ -33,9 +33,12 @@ class DocumentInfo(BaseModel):
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50, description="用户名")
     password: str = Field(min_length=6, max_length=64, description="密码")
-    # 演示级租户准入：注册时声明所属租户，缺省落到 DEFAULT_TENANT。
-    # 生产应由邀请码 / SSO / 组织关系决定（见 docs/v2-plan.md §6.5）。
-    tenant: Optional[str] = Field(default=None, max_length=64, description="租户标识，缺省为默认租户")
+    #: 邀请码。
+    #: `REQUIRE_INVITE=true`（默认）时**必填**，且租户与角色由邀请码决定，
+    #: 下面的 `tenant` 会被忽略（防止注册者自选租户）。
+    invite_code: Optional[str] = Field(default=None, max_length=64, description="邀请码（默认必填）")
+    # 演示级租户准入：仅在 REQUIRE_INVITE=false 时生效（见 docs/v2-plan.md §6.5）。
+    tenant: Optional[str] = Field(default=None, max_length=64, description="租户标识（仅在关闭邀请码时生效）")
 
 
 class LoginRequest(BaseModel):
@@ -68,6 +71,33 @@ class CreateUserRequest(BaseModel):
     password: str = Field(min_length=6, max_length=64, description="密码")
     role: str = Field(default="user", description="角色：viewer / user / admin")
     tenant: Optional[str] = Field(default=None, max_length=64, description="租户，缺省为调用者所在租户")
+
+
+class InviteInfo(BaseModel):
+    """邀请码条目（不含任何密钥；`code` 本身就是凭据，只在签发时展示一次）。"""
+
+    code: str = Field(description="邀请码")
+    tenant_id: str = Field(description="该码可注册进的租户")
+    role: str = Field(description="该码注册出来的角色")
+    max_uses: int = Field(description="最大可用次数；0 表示不限")
+    used_count: int = Field(description="已用次数")
+    expires_at: Optional[str] = Field(default=None, description="过期时间；为空表示不过期")
+    created_at: Optional[str] = Field(default=None, description="签发时间")
+
+
+class CreateInviteRequest(BaseModel):
+    """admin 签发邀请码。"""
+
+    role: str = Field(default="user", description="该码注册出来的角色：viewer / user / admin")
+    max_uses: Optional[int] = Field(
+        default=None, ge=0, le=1000, description="最大可用次数；0 表示不限；缺省用服务端默认值"
+    )
+    expires_in_hours: Optional[int] = Field(
+        default=None, ge=0, le=24 * 365, description="有效期（小时）；0 或缺省表示不过期"
+    )
+    tenant: Optional[str] = Field(
+        default=None, max_length=64, description="租户；只允许填调用者自己所属的租户"
+    )
 
 
 class AskRequest(BaseModel):

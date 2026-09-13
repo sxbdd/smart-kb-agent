@@ -46,6 +46,10 @@ class _StreamResp:
     def close(self) -> None:
         self.closed = True
 
+    def read(self) -> bytes:
+        """httpx 的流式响应读正文返回 **bytes**（报错取错误原因是这条路径）。"""
+        return self.text.encode("utf-8")
+
 
 def _sse(*chunks, finish_reason=None, reasoning: int = 0):
     """把若干文本增量打包成 SSE 行。"""
@@ -82,13 +86,31 @@ def _stream_client(responses, max_tokens: int = 256, max_retries: int = 3):
     budgets: list[int] = []
     payloads: list[dict] = []
 
-    def post(url, headers=None, json=None, timeout=None, stream=False):
+    class _StreamCtx:
+        """模拟 `httpx.stream()` 的上下文管理器（真实 httpx 退出 with 时会关闭响应）。
+
+        历史教训：这个桩原先断言 `httpx.post(..., stream=True)`，而**顶层 `post()` 根本没有
+        `stream` 参数** —— 桩把无效用法固化成了"事实"，于是 24 条用例全绿、真机 100% 失败。
+        现在桩与真实 httpx 的流式 API 保持一致。
+        """
+
+        def __init__(self, resp) -> None:
+            self._resp = resp
+
+        def __enter__(self):
+            return self._resp
+
+        def __exit__(self, *exc) -> bool:
+            self._resp.close()
+            return False
+
+    def stream(method, url, headers=None, json=None, timeout=None):
         budgets.append(json["max_tokens"])
         payloads.append(json)
-        assert stream is True, "chat_stream 必须以 stream=True 发起请求"
-        return responses.pop(0)
+        assert method == "POST", "chat_stream 必须以 POST 发起请求"
+        return _StreamCtx(responses.pop(0))
 
-    client.httpx = SimpleNamespace(post=post)
+    client.httpx = SimpleNamespace(stream=stream)
     return client, budgets, payloads
 
 
@@ -106,6 +128,29 @@ def test_chat_stream_parses_sse_frames_and_stops_at_done():
     assert "".join(pieces) == "你好，世界"
     assert payloads[0]["stream"] is True
     assert budgets == [256]
+
+
+def test_chat_stream_yields_incrementally_instead_of_after_full_read():
+    """回归（真机发现）：必须是"边收边吐"，不能把整条流读完才一次性 yield。
+
+    旧实现"先读完整条流再 yield"，导致**首字延迟恒等于总耗时**（真机 15.531s vs 15.547s），
+    流式在体验上等于不存在。判据：只取第一片时，上游不应已被读完。
+    """
+    consumed: list[str] = []
+
+    class _SpyResp(_StreamResp):
+        def iter_lines(self):
+            for line in self._lines:
+                consumed.append(line)
+                yield line
+
+    frames = _sse("第一片", "第二片", "第三片", finish_reason="stop")
+    client, _, _ = _stream_client([_SpyResp(frames)])
+
+    gen = client.chat_stream([{"role": "user", "content": "hi"}])
+    assert next(gen) == "第一片"
+    assert len(consumed) < len(frames), "拿到第一片时不该已经把整条流读完"
+    assert "".join(gen) == "第二片第三片"
 
 
 def test_chat_stream_ignores_heartbeat_and_malformed_frames():

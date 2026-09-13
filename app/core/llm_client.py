@@ -14,6 +14,18 @@ class LLMClient(Protocol):
     def chat_stream(self, messages: List[dict], max_tokens: int | None = None) -> Iterator[str]: ...
 
 
+def _read_body(resp) -> str:
+    """读取错误响应的正文用于报错。
+
+    流式响应必须先 `read()` 才能拿到内容（`resp.text` 在流式模式下不可用），
+    而且拿到的是 bytes —— 这里统一解码并截断，避免把整个错误页塞进日志。
+    """
+    raw = resp.read() if hasattr(resp, "read") else getattr(resp, "text", "")
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    return str(raw)[:500]
+
+
 class OpenAICompatClient:
     #: 空内容且 finish_reason=length 时的预算上限（推理模型的思考会吃掉 max_tokens）
     MAX_TOKEN_CEILING = 8192
@@ -89,17 +101,18 @@ class OpenAICompatClient:
         raise LLMError(f"LLM 调用失败：{last_err}") from last_err
 
     def chat_stream(self, messages: List[dict], max_tokens: int | None = None) -> Iterator[str]:
-        """流式对话：逐帧产出增量文本。
+        """流式对话：**边收边吐**的增量产出。
 
         与 `chat()` 同源的健壮性（两者互不影响，`chat()` 的行为未做任何改动）：
 
         - 网络异常 / 非 200 / 空内容：退避重试；
         - `finish_reason == "length"` 且**一个字都没产出**：说明预算被推理模型的思考吃光，
           翻倍 `max_tokens` 重试（上限 `MAX_TOKEN_CEILING`）；
-        - **已经开始产出后又失败**：不静默吞掉，抛 `LLMError`（外层可据此发 `error` 事件）。
+        - **已经开始产出后又失败**：不静默吞掉，也不重试（重试会重复输出），抛 `LLMError`。
 
-        实现上先把整条流读完再开始 yield，因此对调用方是**全有或全无**的：
-        要么拿到完整答案，要么拿到 `LLMError`，不会出现"半截答案 + 异常"。
+        为什么必须"边收边吐"（真机踩过的坑）：早期实现先把整条流读完再一次性 `yield`，
+        结果**首字延迟恒等于总耗时** —— 实测 httpx 层首字 15.531s / 结束 15.547s，
+        只差 16ms，流式在体验上等于不存在。改成收到一帧就吐一帧后才有真正的"更早看到字"。
         """
         url = f"{self.api_base}/chat/completions"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -122,46 +135,53 @@ class OpenAICompatClient:
             failed_with_status: int | None = None
             broken: Exception | None = None
 
+            # 注意：必须用 httpx 的**流式上下文管理器**。
+            # `httpx.post(..., stream=True)` 是无效写法 —— 顶层 `post()` 根本没有 `stream` 参数，
+            # 会直接抛 `TypeError: post() got an unexpected keyword argument 'stream'`。
+            # 这正是"离线用例全绿、真机 100% 失败"的那个 P0（见 scripts/verify_streaming.py）。
             try:
-                resp = self.httpx.post(url, headers=headers, json=payload, timeout=self.timeout, stream=True)
-            except Exception as exc:
-                last_err = exc
-                sleep(1.0 * (attempt + 1))
-                continue
-
-            try:
-                if resp.status_code != 200:
-                    failed_with_status = resp.status_code
-                    last_err = LLMError(f"LLM API 错误 {resp.status_code}：{resp.text[:500]}")
-                else:
-                    done_seen = False
-                    for event in self._iter_sse_events(resp):
-                        if event == "[DONE]":
-                            done_seen = True
-                            break
-                        try:
-                            chunk = json.loads(event)
-                            choice = chunk["choices"][0]
-                        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-                            # 心跳 / 非标准帧：跳过，不影响整条流
-                            continue
-                        delta = choice.get("delta") or {}
-                        reasoning_chars += len(delta.get("reasoning_content") or "")
-                        piece = delta.get("content")
-                        if piece:
-                            collected.append(piece)
-                        if choice.get("finish_reason"):
-                            finish_reason = choice["finish_reason"]
-                    if not done_seen:
-                        # 连接提前结束：没收到 [DONE] 也没有 finish_reason，等价于"流被截断"
-                        broken = LLMError("上游连接在 [DONE] 之前关闭")
-            except Exception as exc:
-                # 流中途失败：此时可能已产出内容，绝不能当成"空返回"重试，更不能不报错
-                broken = exc
-            finally:
-                close = getattr(resp, "close", None)
-                if callable(close):
-                    close()
+                with self.httpx.stream(
+                    "POST", url, headers=headers, json=payload, timeout=self.timeout
+                ) as resp:
+                    if resp.status_code != 200:
+                        failed_with_status = resp.status_code
+                        last_err = LLMError(f"LLM API 错误 {resp.status_code}：{_read_body(resp)}")
+                    else:
+                        done_seen = False
+                        for event in self._iter_sse_events(resp):
+                            if event == "[DONE]":
+                                done_seen = True
+                                break
+                            try:
+                                chunk = json.loads(event)
+                                choice = chunk["choices"][0]
+                            except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                                # 心跳 / 非标准帧：跳过，不影响整条流
+                                continue
+                            delta = choice.get("delta") or {}
+                            reasoning_chars += len(delta.get("reasoning_content") or "")
+                            piece = delta.get("content")
+                            if piece:
+                                collected.append(piece)
+                                # **真·增量产出**：拿到一片就吐一片，不等整条流读完。
+                                # （旧实现读完才 yield，导致首字延迟 == 总耗时，流式形同虚设）
+                                yield piece
+                            if choice.get("finish_reason"):
+                                finish_reason = choice["finish_reason"]
+                        if not done_seen:
+                            # 连接提前结束：没收到 [DONE] 也没有 finish_reason，等价于"流被截断"
+                            broken = LLMError("上游连接在 [DONE] 之前关闭")
+            except Exception as exc:  # noqa: BLE001
+                if not collected:
+                    # 连接都没建立 / 还没产出任何内容：可以安静地退避重试
+                    last_err = exc
+                    sleep(1.0 * (attempt + 1))
+                    continue
+                # 已经产出内容后失败：不能重试（会重复输出），必须让调用方知道这次是残的
+                raise LLMError(
+                    f"LLM 流式中断（{type(exc).__name__}）：{exc}；已产出 {len(collected)} 个片段，"
+                    "为避免返回残缺答案，此处直接报错"
+                ) from exc
 
             if broken is not None:
                 if collected:
@@ -178,7 +198,7 @@ class OpenAICompatClient:
                 continue
 
             if collected:
-                yield from collected
+                # 内容已经在上面增量 yield 过了，这里只是正常收尾
                 return
 
             # 与 chat() 一致：只有"被 length 截断"才翻倍预算，且不超过上限

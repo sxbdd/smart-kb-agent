@@ -160,14 +160,63 @@ UPDATE users SET role = 'admin' WHERE username = '<你的账号>' AND tenant_id 
 .venv\Scripts\python scripts\verify_tenancy.py --part all
 ```
 
-四个部分各自可单独跑，全部成功才返回 0：
+五个部分各自可单独跑，全部成功才返回 0：
 
 | 部分 | 验证内容 |
 | --- | --- |
-| `temp-db` | 在临时库跑 `0001 → 0002 → base` 往返，用 `information_schema` 校验列 / 索引 / 唯一键 / 外键 |
+| `temp-db` | 在临时库跑 `0001 → 0003 → base` 往返，用 `information_schema` 校验列 / 索引 / 唯一键 / 外键 |
 | `upgrade` | **真实库**：先逻辑备份 → `stamp` → `upgrade` → 校验结构、存量数据零丢失、重复 upgrade 幂等 |
 | `chroma` | 真实 Chroma 双租户隔离（含"缺 `tenant_id` 老数据不可见"这条已知偏差的固化断言） |
 | `api` | 临时库 + 真实 Chroma 上跑真实 HTTP 角色矩阵与跨租户隔离 |
+| `invites` | 真实库上验证邀请码：bootstrap 免码、**body 的 `tenant` 被忽略**、一次性码、跨租户 404 |
+
+### 9.3 邀请码准入（生产必开）
+
+`REQUIRE_INVITE=true` 之后，注册必须持管理员签发的邀请码，且**租户与角色由邀请码决定**
+（注册请求里的 `tenant` 字段被忽略）。不做这一步，隔离强制点再严也没用 ——
+任何人都能自己选一个租户注册进去。
+
+```powershell
+# 0) 先确保有一个管理员：BOOTSTRAP_ADMIN_USERNAME 指定的账号是唯一免码入口
+#    （没有这个例外，开启邀请码后空库一个人都进不去）
+#    该例外被**收窄**为：只能在 DEFAULT_TENANT 里、且该租户还没有管理员时才生效
+#    （否则任何人拿这个用户名 + 自选租户就能当上那个租户的 admin，是越权洞）
+#    然后在 .env 里设 REQUIRE_INVITE=true 并重启
+
+# 1) 管理员登录拿 token（示例）
+$body = '{"username":"root","password":"<你的密码>"}'
+$token = (Invoke-RestMethod -Uri http://127.0.0.1:8000/auth/login -Method Post -Body $body `
+          -ContentType 'application/json').token
+$H = @{ Authorization = "Bearer $token" }
+
+# 2) 签发一个只用一次、72 小时有效的普通成员邀请码
+Invoke-RestMethod -Uri http://127.0.0.1:8000/admin/invites -Method Post -Headers $H `
+  -ContentType 'application/json' `
+  -Body '{"role":"user","max_uses":1,"expires_in_hours":72}'
+
+# 3) 开通一个新租户：由**平台租户**（DEFAULT_TENANT）的管理员为该租户签一个 admin 码
+Invoke-RestMethod -Uri http://127.0.0.1:8000/admin/invites -Method Post -Headers $H `
+  -ContentType 'application/json' `
+  -Body '{"role":"admin","max_uses":1,"tenant":"acme-corp"}'
+
+# 4) 查看本租户的码 / 作废某个码
+Invoke-RestMethod -Uri http://127.0.0.1:8000/admin/invites -Headers $H
+Invoke-RestMethod -Uri http://127.0.0.1:8000/admin/invites/<code> -Method Delete -Headers $H
+```
+
+| 语义 | 说明 |
+| --- | --- |
+| `role` | 该码注册出来的角色：`viewer`（只读）/ `user`（可上传）/ `admin` —— 可以邀请只读账号 |
+| `max_uses` | 最大可用次数；**0 = 不限**（适合团队通用码） |
+| `expires_in_hours` | 有效期；**0 或缺省 = 不过期** |
+| 租户边界 | 管理员**默认只能签发/查看/删除自己租户的码**；给别的租户签发返回 403（不静默改写） |
+| **平台租户例外** | `DEFAULT_TENANT` 的管理员可以为其它租户签码 —— 这是**新租户唯一的开通途径**（否则要签码得先有那个租户的 admin，鸡生蛋）。权限只放给平台租户，是有意的最小授权 |
+| bootstrap 例外 | 免码注册只在 **`DEFAULT_TENANT` + 该租户尚无管理员**时生效；`BOOTSTRAP_ADMIN_USERNAME` 的账号在别的租户注册一律 403 |
+| 并发安全 | 额度扣减是带条件的单条 `UPDATE`，并发注册不会把"一次性码"用两次 |
+| 跨租户删除 | 按 **404** 返回，不泄漏"这个码存在但你无权" |
+
+> 邀请码功能**不是企业身份体系的替代品**：批量签发、邮件投递、与组织架构同步都没做。
+> 真要对接企业身份，正确方向是 SSO / OIDC。
 
 > 本机实测（2026-09-14）：四部分共 **65 项断言全部通过**，升级前后行数不变
 > （users 4 / documents 6 / conversations 6 / messages 14 / evaluation_runs 6）。

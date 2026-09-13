@@ -159,3 +159,47 @@ def test_calculation_question_shows_agent_mode(browser, live_server):
     page.click("#ask-btn")
     page.wait_for_selector(".mode-tag", timeout=30_000)
     assert page.inner_text(".mode-tag").strip() == "agent"
+
+
+def test_role_gating_is_visible_in_ui(browser, live_server):
+    """角色差异必须在**界面上**可见，而不只是后端 403。
+
+    这条是 V2 的前端补丁：RBAC 落地后如果界面仍把"删文档/评测/用户管理"摆给所有人看，
+    用户点下去只会拿到一个 403，体验上是"功能坏了"而不是"你没权限"。
+    所以断言两件事：普通用户看不到管理入口；bootstrap 管理员看得到且能打开管理弹层。
+    """
+    def _enter(page, username: str) -> None:
+        page.goto(live_server, wait_until="domcontentloaded")
+        page.fill("#login-username", username)
+        page.fill("#login-password", "e2e123456")
+        page.click("button[onclick='doRegister()']")
+        page.wait_for_selector("#app:not(.hidden)", timeout=15_000)
+
+    # 1) 普通用户：角色徽章是"成员"，且**没有**管理入口
+    user_page = browser.new_page()
+    _enter(user_page, "e2erole")
+    user_page.wait_for_function(
+        "() => (document.querySelector('#auth-role')?.textContent || '').trim() === '成员'",
+        timeout=10_000,
+    )
+    assert not user_page.is_visible("#btn-admin"), "普通用户不该看到管理入口"
+
+    # 2) bootstrap 管理员（conftest 的 settings 把 BOOTSTRAP_ADMIN_USERNAME 设为 root）
+    admin_page = browser.new_page()
+    _enter(admin_page, "root")
+    admin_page.wait_for_function(
+        "() => (document.querySelector('#auth-role')?.textContent || '').trim() === '管理员'",
+        timeout=10_000,
+    )
+    assert admin_page.is_visible("#btn-admin"), "管理员应看到管理入口"
+
+    # 3) 管理弹层能打开；切到「用户管理」页签后用户列表才可见
+    #    （默认停在「文档管理」页签，所以直接断言用户列表会误判为"弹层是空壳"）
+    admin_page.click("#btn-admin")
+    admin_page.wait_for_selector("#modal-admin:not(.hidden)", timeout=10_000)
+    assert admin_page.is_visible("#pane-docs"), "默认应停在文档管理页签"
+
+    admin_page.click('button[data-pane="users"]')
+    admin_page.wait_for_selector("#pane-users:not(.hidden)", timeout=10_000)
+    assert admin_page.is_visible("#admin-user-list")
+    assert admin_page.is_visible("#new-user-btn"), "管理员应能代建账号"

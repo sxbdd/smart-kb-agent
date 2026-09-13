@@ -2,538 +2,1862 @@
 <html lang="zh">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>智能知识库 · RAG + Agent</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<title>智能知识库 · 企业 RAG + Agent 问答</title>
+<!-- 空 data URI 图标：不请求外网，同时避免 /favicon.ico 404 噪音 -->
 <link rel="icon" href="data:," />
 <style>
+/* =========================================================================
+   1. 设计令牌
+   只保留"一套中性色 + 一个强调色"，深浅色各给一组值，组件样式一律引用变量，
+   避免色值散落在各处导致深浅色模式漏改。
+   ========================================================================= */
+:root {
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC",
+          "Hiragino Sans GB", "Source Han Sans SC", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --bg: #f7f8fa;              /* 应用底色 */
+  --surface: #ffffff;         /* 卡片 / 栏底色 */
+  --surface-2: #f2f4f7;       /* 次级填充（代码、内联块） */
+  --surface-3: #e8ebef;       /* 悬停填充 */
+  --text: #1b2430;
+  --text-2: #55606e;
+  --text-3: #8a94a1;
+  --border: #e3e7ec;
+  --border-strong: #cfd6de;
+
+  --accent: #3b5bdb;          /* 克制的靛蓝，避免"彩虹配色" */
+  --accent-hover: #324fc4;
+  --accent-soft: #eef2ff;
+  --accent-text: #2f49b8;
+
+  --danger: #c0392b;
+  --danger-soft: #fdf1ef;
+  --danger-border: #f0c9c3;
+  --ok: #1a7f5a;
+  --ok-soft: #eaf7f1;
+
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-2: 0 10px 30px rgba(16, 24, 40, .12);
+
+  --r-sm: 6px; --r-md: 9px; --r-lg: 13px; --r-full: 999px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 22px;
+  --topbar-h: 54px;
+  --read-width: 780px;
+}
+
+/* 深色自适应：跟随系统，不引入切换按钮与额外状态 */
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg: #ffffff; --bg-subtle: #f7f8fa; --text: #1f2933; --text-secondary: #52606d; --text-muted: #7b8794;
-    --border: #e4e7eb; --accent: #2563eb; --accent-soft: #eff6ff; --radius: 10px; --max-read: 720px;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --bg: #14171c;
+    --surface: #1a1e25;
+    --surface-2: #232830;
+    --surface-3: #2b313b;
+    --text: #e8ecf2;
+    --text-2: #a7b1bf;
+    --text-3: #7c8796;
+    --border: #2a303a;
+    --border-strong: #3a424e;
+
+    --accent: #7d95ff;
+    --accent-hover: #94a8ff;
+    --accent-soft: #212a45;
+    --accent-text: #b6c4ff;
+
+    --danger: #ff8b7d;
+    --danger-soft: #33211f;
+    --danger-border: #5a3733;
+    --ok: #6fd6a8;
+    --ok-soft: #1b2f28;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
+    --shadow-2: 0 14px 34px rgba(0, 0, 0, .5);
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
-  .topbar { height: 52px; flex: 0 0 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--border); }
-  .brand { font-size: 15px; font-weight: 600; }
-  .brand-sub { color: var(--text-muted); font-weight: 400; font-size: 13px; margin-left: 6px; }
-  .user-area { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-secondary); }
-  .link-btn { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 4px 8px; border-radius: 6px; }
-  .link-btn:hover { color: var(--text); background: var(--bg-subtle); }
+}
 
-  .app { flex: 1; display: grid; grid-template-columns: 250px 1fr 300px; overflow: hidden; }
+/* =========================================================================
+   2. 基础与通用件
+   ========================================================================= */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text); font-family: var(--font);
+  font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* 必须是 flex 列容器：否则 #app 的 flex:1 不生效，页面只按内容高度收缩（窄屏会露出底部空白） */
+  display: flex; flex-direction: column;
+}
+button { font-family: inherit; font-size: inherit; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+input, textarea, select { font-family: inherit; font-size: inherit; color: inherit; }
+a { color: var(--accent); }
 
-  /* 左栏：会话 */
-  .sidebar-left { border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 14px; gap: 10px; overflow-y: auto; }
-  .new-chat { padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; text-align: left; font-size: 14px; }
-  .new-chat:hover { border-color: var(--accent); color: var(--accent); }
-  .conv-list { display: flex; flex-direction: column; gap: 2px; }
-  .conv-item { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13.5px; color: var(--text-secondary); border: none; background: none; text-align: left; }
-  .conv-item .title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .conv-item:hover { background: var(--bg-subtle); }
-  .conv-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
-  .conv-item .ops { display: none; gap: 2px; }
-  .conv-item:hover .ops { display: flex; }
-  .icon-btn { background: none; border: none; cursor: pointer; font-size: 13px; padding: 2px 4px; border-radius: 4px; color: var(--text-muted); }
-  .icon-btn:hover { background: var(--border); color: var(--text); }
+.hidden { display: none !important; }
+.muted { color: var(--text-3); }
 
-  /* 中栏：对话 */
-  .chat { display: flex; flex-direction: column; overflow: hidden; }
-  .messages { flex: 1; overflow-y: auto; padding: 28px 0; }
-  .msg { max-width: var(--max-read); margin: 0 auto 22px; padding: 0 24px; }
-  .msg.user { display: flex; justify-content: flex-end; }
-  .msg.user .bubble { background: var(--accent-soft); color: var(--text); border-radius: 14px 14px 4px 14px; padding: 10px 16px; font-size: 15px; max-width: 85%; line-height: 1.6; }
+/* 视觉隐藏但仍在布局中（用于"已登出"时隐藏顶栏内容而不破坏顶栏高度） */
+.invisible { visibility: hidden; }
 
-  /* mode 标识 */
-  .mode-tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 20px; margin-bottom: 8px; color: var(--text-muted); background: var(--bg-subtle); }
-  .mode-tag.rag { color: #0369a1; background: #e0f2fe; }
-  .mode-tag.agent { color: #7c3aed; background: #f3e8ff; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
 
-  /* Markdown 排版系统 */
-  .markdown { line-height: 1.75; color: var(--text); font-size: 15px; }
-  .markdown > *:first-child { margin-top: 0 !important; }
-  .markdown > *:last-child { margin-bottom: 0 !important; }
-  .markdown h1 { font-size: 1.45em; font-weight: 700; margin: 1.3em 0 0.5em; line-height: 1.4; }
-  .markdown h2 { font-size: 1.22em; font-weight: 650; margin: 1.2em 0 0.4em; }
-  .markdown h3 { font-size: 1.08em; font-weight: 620; margin: 1.1em 0 0.35em; }
-  .markdown p { margin: 0.75em 0; }
-  .markdown ul, .markdown ol { margin: 0.6em 0; padding-left: 1.6em; }
-  .markdown li { margin: 0.3em 0; }
-  .markdown strong { font-weight: 650; }
-  .markdown blockquote { margin: 0.9em 0; padding: 0.55em 1em; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 6px 6px 0; color: var(--text-secondary); }
-  .markdown code { font-family: var(--mono); font-size: 0.88em; background: #eef1f5; padding: 0.15em 0.45em; border-radius: 4px; color: #b91c1c; }
-  .markdown pre { background: #0f172a; color: #e2e8f0; padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 0.9em 0; line-height: 1.55; }
-  .markdown pre code { background: none; padding: 0; color: inherit; font-size: 13px; }
-  .markdown table { border-collapse: collapse; margin: 0.9em 0; font-size: 0.95em; display: block; overflow-x: auto; }
-  .markdown th, .markdown td { border: 1px solid var(--border); padding: 0.55em 0.9em; text-align: left; }
-  .markdown th { background: var(--bg-subtle); font-weight: 600; }
-  .markdown hr { border: none; border-top: 1px solid var(--border); margin: 1.4em 0; }
+/* 按钮：主/次/幽灵/danger 四档足够覆盖全站，避免风格漂移 */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 14px; border: 1px solid transparent; border-radius: var(--r-md);
+  background: var(--accent); color: #fff; font-weight: 500; white-space: nowrap;
+  transition: background .15s, border-color .15s, color .15s, opacity .15s;
+}
+.btn:hover:not(:disabled) { background: var(--accent-hover); }
+.btn:disabled { opacity: .5; }
+.btn.secondary { background: var(--surface); border-color: var(--border); color: var(--text); }
+.btn.secondary:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface-2); }
+.btn.ghost { background: transparent; color: var(--text-2); font-weight: 400; }
+.btn.ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.btn.danger { background: var(--danger); }
+.btn.danger-outline { background: var(--surface); border-color: var(--danger-border); color: var(--danger); }
+.btn.danger-outline:hover:not(:disabled) { background: var(--danger-soft); }
+.btn.sm { padding: 5px 10px; font-size: 12.5px; border-radius: var(--r-sm); }
+.btn.block { width: 100%; }
 
-  /* 引用来源 + 复制 */
-  .answer-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
-  .copy-btn { font-size: 12px; color: var(--text-muted); background: none; border: 1px solid var(--border); padding: 3px 10px; border-radius: 6px; cursor: pointer; }
-  .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
-  .sources { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); font-size: 12.5px; color: var(--text-muted); }
-  .sources details { margin: 4px 0; }
-  .sources summary { cursor: pointer; color: var(--text-secondary); }
-  .sources summary:hover { color: var(--accent); }
-  .sources .snippet { margin-top: 4px; padding: 8px 10px; background: var(--bg-subtle); border-radius: 6px; font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; }
+.field-label { display: block; font-size: 12.5px; color: var(--text-2); margin: 0 0 5px; }
+.input {
+  width: 100%; padding: 8px 11px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface); outline: none; transition: border-color .15s, box-shadow .15s;
+}
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+textarea.input { resize: none; }
 
-  /* 输入区 */
-  .composer { flex: 0 0 auto; padding: 14px 24px 18px; }
-  .composer-inner { max-width: var(--max-read); margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
-  .composer input { flex: 1; font-size: 15px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 12px; outline: none; }
-  .composer input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.10); }
-  .composer button { padding: 12px 20px; border: none; border-radius: 12px; background: var(--accent); color: #fff; cursor: pointer; font-size: 14px; }
-  .composer button:disabled { background: #9aa5b1; cursor: not-allowed; }
+/* 行内提示：错误 / 成功 / 中性说明共用一个组件，减少一次性样式 */
+.hint { font-size: 12.5px; line-height: 1.55; }
+.hint.err { color: var(--danger); }
+.hint.ok { color: var(--ok); }
+.hint.info { color: var(--text-3); }
+.hint.box { padding: 9px 11px; border-radius: var(--r-md); }
+.hint.box.err { background: var(--danger-soft); border: 1px solid var(--danger-border); }
+.hint.box.ok { background: var(--ok-soft); }
+.hint.box.info { background: var(--surface-2); }
 
-  /* 右栏：知识库 + 评测 */
-  .sidebar-right { border-left: 1px solid var(--border); overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 22px; }
-  .right-section h3 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; }
-  .upload-row { display: flex; flex-direction: column; gap: 8px; }
-  .upload-row input[type=file] { font-size: 13px; color: var(--text-secondary); }
-  .small-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; font-size: 13px; }
-  .small-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .small-btn.danger:hover { border-color: #dc2626; color: #dc2626; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); }
 
-  /* 文件预览确认 */
-  .file-preview { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--bg-subtle); }
-  .file-preview .fp-name { font-size: 13px; font-weight: 600; word-break: break-all; }
-  .file-preview .fp-meta { font-size: 12px; color: var(--text-muted); margin: 2px 0 6px; }
-  .file-preview .fp-text { font-size: 12px; color: var(--text-secondary); background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 8px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
-  .file-preview .fp-actions { display: flex; gap: 6px; margin-top: 8px; }
-  .file-preview .fp-actions button { flex: 1; }
+/* 空状态：一句说明 + 一个动作引导，不留白 */
+.empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 26px 16px; text-align: center; color: var(--text-3); font-size: 13px;
+}
+.empty .empty-title { color: var(--text-2); font-weight: 500; }
+.empty .empty-action { margin-top: 2px; }
 
-  /* 文档工具栏 + 分页 */
-  .doc-toolbar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-  .doc-toolbar input { flex: 1; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; outline: none; }
-  .doc-list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
-  .doc-item { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 13px; color: var(--text-secondary); padding: 6px 8px; border-radius: 6px; }
-  .doc-item:hover { background: var(--bg-subtle); }
-  .doc-item .di-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .doc-item .di-meta { color: var(--text-muted); font-size: 12px; }
-  .doc-pager { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 12px; color: var(--text-muted); }
-  .doc-pager button { font-size: 12px; padding: 4px 10px; border: 1px solid var(--border); background: var(--bg); border-radius: 6px; cursor: pointer; }
-  .doc-pager button:disabled { opacity: .4; cursor: not-allowed; }
+/* =========================================================================
+   3. 顶栏
+   ========================================================================= */
+.topbar {
+  height: var(--topbar-h); flex: 0 0 var(--topbar-h); display: flex; align-items: center;
+  justify-content: space-between; gap: var(--sp-3); padding: 0 var(--sp-4);
+  background: var(--surface); border-bottom: 1px solid var(--border); z-index: 30;
+}
+.brand { display: flex; align-items: baseline; gap: 7px; font-weight: 600; font-size: 15px; }
+.brand-sub { font-size: 12px; font-weight: 400; color: var(--text-3); }
+.user-area { display: flex; align-items: center; gap: var(--sp-2); }
+.identity { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+#auth-user { font-weight: 500; }
+.badge {
+  font-size: 11.5px; padding: 1.5px 8px; border-radius: var(--r-full);
+  border: 1px solid var(--border); color: var(--text-2); background: var(--surface-2);
+}
+.badge.role.viewer { color: var(--text-2); }
+.badge.role.user { color: var(--accent-text); background: var(--accent-soft); border-color: transparent; }
+.badge.role.admin { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+.badge.tenant { font-family: var(--mono); font-size: 11px; }
 
-  .metric-row { font-size: 13px; color: var(--text-secondary); padding: 5px 0; border-bottom: 1px solid var(--bg-subtle); display: flex; justify-content: space-between; }
-  .metric-row b { color: var(--text); font-weight: 600; }
-  .eval-history { margin-top: 10px; font-size: 12px; }
-  .eval-history .eh-item { padding: 6px 0; border-bottom: 1px solid var(--bg-subtle); color: var(--text-secondary); }
-  .eh-item b { color: var(--text); }
+/* 窄屏顶部工具条与底部标签栏：默认隐藏，只在窄屏出现 */
+.mobile-tools { display: none; }
+.tabbar { display: none; }
 
-  /* 登录页 */
-  #login-panel { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); z-index: 10; }
-  .login-card { width: 360px; }
-  .login-card h2 { font-size: 20px; text-align: center; margin-bottom: 4px; }
-  .login-card .sub { text-align: center; color: var(--text-muted); font-size: 13px; margin-bottom: 22px; }
-  .login-card label { display: block; font-size: 13px; color: var(--text-secondary); margin: 12px 0 5px; }
-  .login-card input { width: 100%; font-size: 14px; padding: 11px 13px; border: 1px solid var(--border); border-radius: 9px; outline: none; }
-  .login-card input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.10); }
-  .login-btns { display: flex; gap: 10px; margin-top: 18px; }
-  .login-btns button { flex: 1; padding: 11px; border-radius: 9px; border: none; cursor: pointer; font-size: 14px; }
-  .login-btns .primary { background: var(--accent); color: #fff; }
-  .login-btns .secondary { background: var(--bg-subtle); color: var(--text); border: 1px solid var(--border); }
-  .login-msg { font-size: 13px; margin-top: 12px; min-height: 18px; }
-  .err { color: #dc2626; } .ok { color: #059669; }
-  .hidden { display: none !important; }
+/* =========================================================================
+   4. 三栏骨架
+   ========================================================================= */
+.app { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.app-main {
+  flex: 1; min-height: 0; display: grid;
+  grid-template-columns: 250px minmax(0, 1fr) 320px;
+}
+
+/* ---- 左栏：会话 ---- */
+.sidebar-left {
+  display: flex; flex-direction: column; min-height: 0; overflow-y: auto;
+  background: var(--surface); border-right: 1px solid var(--border); padding: var(--sp-3);
+  gap: var(--sp-3);
+}
+.side-head { display: flex; align-items: center; justify-content: space-between; }
+.side-title { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-3); }
+.conv-list { display: flex; flex-direction: column; gap: 2px; }
+.conv-item {
+  display: flex; align-items: center; gap: 4px; padding: 7px 9px; border-radius: var(--r-md);
+  cursor: pointer; color: var(--text-2); border: 1px solid transparent;
+}
+.conv-item:hover { background: var(--surface-2); }
+.conv-item.active { background: var(--accent-soft); color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
+.conv-main { flex: 1; min-width: 0; }
+.conv-title { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-meta { font-size: 11.5px; color: var(--text-3); }
+.conv-item.active .conv-meta { color: var(--accent-text); opacity: .8; }
+.conv-ops { display: flex; gap: 1px; opacity: 0; transition: opacity .12s; }
+.conv-item:hover .conv-ops, .conv-item:focus-within .conv-ops { opacity: 1; }
+@media (hover: none) { .conv-ops { opacity: 1; } }   /* 触屏没有 hover，操作按钮直接常显 */
+.icon-btn {
+  background: transparent; border: none; color: var(--text-3); padding: 3px 5px;
+  border-radius: var(--r-sm); font-size: 12px; line-height: 1;
+}
+.icon-btn:hover { background: var(--surface-3); color: var(--text); }
+
+/* ---- 中栏：问答 ---- */
+.chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* 消息区必须 flex:1 才能撑满中栏剩余高度（否则整列只按内容高度收缩） */
+.messages { flex: 1; min-height: 0; overflow-y: auto; padding: var(--sp-5) 0 var(--sp-4); scroll-behavior: smooth; }
+#chat-empty { flex: 0 0 auto; }
+/* 「回到最新」：不抢滚动条，但要让用户知道有新内容在下面 */
+.jump-bottom {
+  position: absolute; right: 26px; bottom: 112px; z-index: 5;
+  padding: 5px 11px; font-size: 12.5px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-full);
+  box-shadow: var(--shadow-2); color: var(--text-2);
+}
+.jump-bottom.gone { opacity: 0; visibility: hidden; pointer-events: none; }
+.msg { max-width: var(--read-width); margin: 0 auto var(--sp-5); padding: 0 var(--sp-5); }
+.msg.user { display: flex; justify-content: flex-end; }
+.msg.user .bubble {
+  background: var(--accent-soft); color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg); padding: 9px 14px;
+  font-size: 14.5px; max-width: 86%; white-space: pre-wrap; word-break: break-word;
+}
+.msg.assistant .bubble-inner { padding-left: 2px; }
+
+.mode-tag {
+  display: inline-block; font-size: 11.5px; padding: 2px 9px; border-radius: var(--r-full);
+  margin-bottom: 7px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border);
+}
+.mode-tag.rag { color: #0b6b96; background: #e7f4fb; border-color: #cbe6f4; }
+.mode-tag.agent { color: #6b46c1; background: #f1ecfd; border-color: #e0d6fa; }
+@media (prefers-color-scheme: dark) {
+  .mode-tag.rag { color: #7cc7ea; background: #17293a; border-color: #23415a; }
+  .mode-tag.agent { color: #c0a9f5; background: #251f3d; border-color: #362c58; }
+}
+.mode-name { color: var(--text-3); font-size: 12px; margin-left: var(--sp-2); }
+
+/* 思考中状态：只占一行，不写进 markdown（避免被当作回答内容） */
+.pending { display: flex; align-items: center; gap: 9px; font-size: 14px; color: var(--text-2); }
+.spinner {
+  width: 13px; height: 13px; flex: 0 0 13px; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  animation: spin .9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
+/* Markdown 排版 */
+.markdown { line-height: 1.78; font-size: 15px; word-break: break-word; }
+.markdown > *:first-child { margin-top: 0 !important; }
+.markdown > *:last-child { margin-bottom: 0 !important; }
+.markdown h1 { font-size: 1.4em; margin: 1.3em 0 .5em; line-height: 1.4; }
+.markdown h2 { font-size: 1.2em; margin: 1.2em 0 .45em; line-height: 1.4; }
+.markdown h3 { font-size: 1.06em; margin: 1.05em 0 .4em; }
+.markdown p { margin: .7em 0; }
+.markdown ul, .markdown ol { margin: .6em 0; padding-left: 1.5em; }
+.markdown li { margin: .28em 0; }
+.markdown blockquote {
+  margin: .85em 0; padding: .5em 1em; border-left: 3px solid var(--accent);
+  background: var(--accent-soft); border-radius: 0 var(--r-sm) var(--r-sm) 0; color: var(--text-2);
+}
+.markdown code {
+  font-family: var(--mono); font-size: .88em; background: var(--surface-2);
+  padding: .12em .42em; border-radius: 4px; border: 1px solid var(--border);
+}
+.markdown pre {
+  background: var(--surface-2); border: 1px solid var(--border); padding: 12px 14px;
+  border-radius: var(--r-md); overflow-x: auto; margin: .85em 0; line-height: 1.55;
+}
+.markdown pre code { background: none; border: none; padding: 0; font-size: 13px; }
+.markdown table { border-collapse: collapse; margin: .85em 0; font-size: .95em; display: block; overflow-x: auto; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: .5em .85em; text-align: left; }
+.markdown th { background: var(--surface-2); }
+.markdown hr { border: none; border-top: 1px solid var(--border); margin: 1.3em 0; }
+.markdown img { max-width: 100%; border-radius: var(--r-md); }
+
+/* 回答尾部：复制 + 引用来源 */
+.answer-meta { display: flex; align-items: center; gap: var(--sp-2); margin-top: 10px; min-height: 26px; }
+.answer-meta .spacer { flex: 1; }
+.answer-meta .meta-text { font-size: 12px; color: var(--text-3); }
+
+.sources {
+  margin-top: 10px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--surface); overflow: hidden;
+}
+.sources-summary {
+  display: flex; align-items: center; gap: 7px; padding: 8px 11px; cursor: pointer;
+  font-size: 12.5px; color: var(--text-2); list-style: none; user-select: none;
+}
+.sources-summary::-webkit-details-marker { display: none; }
+.sources-summary:hover { background: var(--surface-2); }
+.sources-summary .caret { transition: transform .15s; font-size: 10px; color: var(--text-3); }
+.sources[open] .sources-summary .caret { transform: rotate(90deg); }
+.sources-body { border-top: 1px solid var(--border); padding: 4px 0; }
+.source-item { padding: 9px 11px; border-bottom: 1px dashed var(--border); }
+.source-item:last-child { border-bottom: none; }
+.source-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+.source-name { font-size: 12.5px; font-weight: 500; color: var(--text); word-break: break-all; }
+.source-score { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.source-snippet {
+  margin-top: 5px; font-size: 12.5px; color: var(--text-2); line-height: 1.6;
+  background: var(--surface-2); border-radius: var(--r-sm); padding: 7px 9px;
+  white-space: pre-wrap; word-break: break-word; max-height: 132px; overflow: auto;
+}
+
+/* 输入区 */
+.composer { flex: 0 0 auto; padding: 10px var(--sp-5) var(--sp-4); background: linear-gradient(to bottom, transparent, var(--bg) 32%); }
+.composer-inner {
+  max-width: var(--read-width); margin: 0 auto; display: flex; gap: var(--sp-2); align-items: flex-end;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 7px 7px 7px 12px; box-shadow: var(--shadow-1); transition: border-color .15s, box-shadow .15s;
+}
+.composer-inner:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent); }
+.composer textarea {
+  flex: 1; border: none; outline: none; background: transparent; resize: none;
+  max-height: 150px; padding: 7px 0; line-height: 1.6; font-size: 14.5px;
+}
+.composer .btn { border-radius: var(--r-md); }
+.composer-hint { max-width: var(--read-width); margin: 6px auto 0; font-size: 11.5px; color: var(--text-3); display: flex; justify-content: space-between; gap: var(--sp-3); }
+
+/* ---- 右栏：知识库 / 评测 ---- */
+.sidebar-right {
+  display: flex; flex-direction: column; min-height: 0; overflow-y: auto;
+  background: var(--surface); border-left: 1px solid var(--border); padding: var(--sp-3);
+  gap: var(--sp-5);
+}
+.panel { display: flex; flex-direction: column; gap: var(--sp-3); }
+.panel-head { display: flex; align-items: center; justify-content: space-between; }
+.panel-title { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-3); }
+.panel-count { font-size: 12px; color: var(--text-3); font-weight: 400; }
+
+.dropzone {
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-2); text-align: center;
+  border: 1px dashed var(--border-strong); border-radius: var(--r-md); padding: 14px 10px;
+  color: var(--text-3); font-size: 12.5px; cursor: pointer; background: var(--surface-2);
+  transition: border-color .15s, color .15s, background .15s;
+}
+.dropzone:hover, .dropzone.dragging { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+/* 真正的文件输入铺满 dropzone：点击、拖拽、键盘（Enter/Space）都原生可用 */
+.dropzone { position: relative; }
+.dropzone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.file-pill {
+  display: flex; align-items: center; gap: var(--sp-2); padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2);
+}
+.file-pill .fp-body { flex: 1; min-width: 0; }
+.file-pill .fp-name { font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-pill .fp-meta { font-size: 11.5px; color: var(--text-3); }
+.file-preview-text {
+  margin-top: var(--sp-2); font-size: 12px; color: var(--text-2); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 9px;
+  max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+}
+.doc-list { display: flex; flex-direction: column; gap: 1px; }
+.doc-item {
+  display: flex; align-items: center; gap: var(--sp-2); padding: 7px 9px;
+  border-radius: var(--r-md); font-size: 13px; color: var(--text-2);
+}
+.doc-item:hover { background: var(--surface-2); }
+.doc-item .di-body { flex: 1; min-width: 0; }
+.doc-item .di-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.doc-item .di-meta { font-size: 11.5px; color: var(--text-3); }
+.doc-pager { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-3); }
+.doc-pager button:disabled { opacity: .4; }
+
+.metric-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 13px; color: var(--text-2); border-bottom: 1px solid var(--border); }
+.metric-row:last-child { border-bottom: none; }
+.metric-row b { color: var(--text); font-weight: 600; }
+.run-item { padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--text-2); }
+.run-item:last-child { border-bottom: none; }
+.run-item .run-time { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); }
+
+/* =========================================================================
+   5. 登录页
+   ========================================================================= */
+#login-panel {
+  position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-4); background: var(--bg); overflow-y: auto;
+}
+.login-card { width: 100%; max-width: 372px; padding: 26px 24px; box-shadow: var(--shadow-2); }
+.login-card h2 { font-size: 19px; margin: 0 0 4px; }
+.login-card .sub { margin: 0 0 20px; font-size: 12.5px; color: var(--text-3); }
+.login-card .field { margin-bottom: var(--sp-3); }
+.login-btns { display: flex; gap: var(--sp-2); margin-top: var(--sp-4); }
+.login-btns .btn { flex: 1; padding: 10px; }
+.login-foot { margin-top: var(--sp-4); font-size: 11.5px; color: var(--text-3); line-height: 1.6; }
+
+/* =========================================================================
+   6. 弹层（重命名 / 确认 / 管理 / 抽屉遮罩）
+   z-index 分层约定：scrim 40 < 管理弹层 60 < 确认/输入弹层 80
+   —— 管理区里的删除必须在管理弹层**之上**打开，否则点不到确认按钮。
+   ========================================================================= */
+.modal {
+  position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-4); background: rgba(15, 20, 28, .45);
+}
+#modal-admin { z-index: 60; }
+.modal-card {
+  width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--shadow-2); padding: 20px; max-height: 88vh; overflow-y: auto;
+}
+.modal-card.wide { max-width: 620px; }
+.modal-card h3 { margin: 0 0 6px; font-size: 16px; }
+.modal-card p { margin: 0 0 var(--sp-3); font-size: 13.5px; color: var(--text-2); line-height: 1.65; }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-4); }
+.modal-close { position: absolute; top: 12px; right: 12px; }
+.scrim { position: fixed; inset: 0; z-index: 40; background: rgba(15, 20, 28, .35); }
+
+/* 管理弹层内部按卡片分段，避免一屏塞满控件 */
+.admin-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: var(--sp-4); }
+.admin-tabs button {
+  background: transparent; border: none; padding: 8px 12px; font-size: 13px; color: var(--text-2);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.admin-tabs button.active { color: var(--accent-text); border-bottom-color: var(--accent); }
+.admin-pane { display: flex; flex-direction: column; gap: var(--sp-3); }
+.form-row { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.form-row > * { flex: 1; min-width: 130px; }
+.user-table { display: flex; flex-direction: column; font-size: 13px; }
+.user-row { display: flex; align-items: center; gap: var(--sp-2); padding: 7px 2px; border-bottom: 1px solid var(--border); }
+.user-row:last-child { border-bottom: none; }
+.user-row .u-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-row .u-time { font-size: 11.5px; color: var(--text-3); font-family: var(--mono); }
+
+/* =========================================================================
+   7. 窄屏（<900px）：单栏 + 底部标签栏切换左右两栏
+   —— 移动端优先保证"能读、能问"，把次要栏目改成按需切换而不是压缩
+   ========================================================================= */
+@media (max-width: 900px) {
+  /* 窄屏：主区仍是纵向 flex，这样中栏的消息区能内部滚动、输入框始终贴在标签栏上方 */
+  .app-main { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .chat { flex: 1 1 auto; }
+  /* 窄屏一次只显示一栏；用 data-tab 表示"当前在看哪一栏"，比给每个面板加 class 状态更少 */
+  .sidebar-left, .sidebar-right {
+    display: none; flex-direction: column; border: none; padding: var(--sp-3);
+    background: var(--bg); min-height: 100%;
+  }
+  #app[data-tab="convs"] .sidebar-left { display: flex; }
+  #app[data-tab="knowledge"] .sidebar-right { display: flex; }
+  .msg, .composer-inner, .composer-hint { max-width: none; }
+  .mobile-tools { display: flex; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3) 0; }
+  /* 窄屏顶栏空间紧张：品牌不换行、次要文字让位，避免"智能知识库"被折成两行 */
+  .brand { font-size: 14px; white-space: nowrap; }
+  .brand-sub { display: none; }
+  .badge.role { white-space: nowrap; }
+  /* 窄屏下把"输入提示 / 角色说明"收起来，把高度留给对话本身 */
+  .composer-hint { display: none; }
+  .mobile-tools .btn { flex: 1; }
+  .tabbar {
+    display: flex; flex: 0 0 auto; border-top: 1px solid var(--border); background: var(--surface);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .tabbar button {
+    flex: 1; background: transparent; border: none; padding: 9px 4px 10px; font-size: 12.5px;
+    color: var(--text-3); display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .tabbar button[aria-selected="true"] { color: var(--accent-text); }
+  .tabbar .tab-icon { font-size: 15px; line-height: 1; }
+  .msg, .composer-inner, .composer-hint { padding-left: var(--sp-4); padding-right: var(--sp-4); }
+  .msg { padding-left: 0; padding-right: 0; }
+  .msg .bubble, .msg .bubble-inner { padding-left: var(--sp-4); padding-right: var(--sp-4); }
+  .msg.user .bubble { margin-right: var(--sp-4); }
+  .jump-bottom { right: var(--sp-4); bottom: 116px; }
+  .composer { padding-left: var(--sp-3); padding-right: var(--sp-3); }
+}
 </style>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">智能知识库<span class="brand-sub">RAG + Agent</span></div>
-    <div class="user-area"><span id="auth-user"></span><button class="link-btn hidden" id="btn-logout" onclick="logout()">退出</button></div>
-  </header>
-
+  <!-- ===================== 登录 / 注册 ===================== -->
   <div id="login-panel">
-    <div class="login-card">
-      <h2>登录 / 注册</h2>
-      <p class="sub">首次使用请点「注册」</p>
-      <label>用户名（至少 3 位）</label>
-      <input type="text" id="login-username" placeholder="例如：zhangsan" autocomplete="username" />
-      <label>密码（至少 6 位）</label>
-      <input type="password" id="login-password" placeholder="至少 6 位" autocomplete="current-password" />
-      <div class="login-btns">
-        <button class="primary" onclick="doLogin()">登录</button>
-        <button class="secondary" onclick="doRegister()">注册</button>
+    <div class="login-card card">
+      <h2>智能知识库</h2>
+      <p class="sub">登录后即可上传企业文档并用自然语言提问</p>
+      <div class="field">
+        <label class="field-label" for="login-username">用户名（3–50 位）</label>
+        <input class="input" type="text" id="login-username" placeholder="例如：zhangsan"
+               autocomplete="username" spellcheck="false" />
       </div>
-      <div class="login-msg" id="login-msg"></div>
+      <div class="field">
+        <label class="field-label" for="login-password">密码（6–64 位）</label>
+        <input class="input" type="password" id="login-password" placeholder="至少 6 位"
+               autocomplete="current-password" />
+      </div>
+      <div class="field">
+        <label class="field-label" for="login-tenant">租户（可留空）</label>
+        <input class="input" type="text" id="login-tenant" placeholder="留空使用默认租户"
+               autocomplete="organization" spellcheck="false" />
+      </div>
+      <div class="login-btns">
+        <button class="btn" id="login-btn" onclick="doLogin()">登录</button>
+        <!-- 注意：注册按钮必须保留字面量 onclick="doRegister()"（E2E 依赖该属性选择器） -->
+        <button class="btn secondary" onclick="doRegister()">注册</button>
+      </div>
+      <div id="login-msg" class="hint" style="margin-top:12px;min-height:18px" role="status" aria-live="polite"></div>
+      <p class="login-foot">首次使用请点「注册」。若自助注册已关闭或仅开放只读账号，请联系管理员开通。</p>
     </div>
   </div>
 
-  <div id="app" class="app hidden">
-    <aside class="sidebar-left">
-      <button class="new-chat" onclick="newChat()">＋ 新建对话</button>
-      <div class="conv-list" id="conversation-list"></div>
-    </aside>
+  <!-- ===================== 主应用 ===================== -->
+  <div id="app" class="app hidden" data-tab="chat">
+    <header class="topbar">
+      <div class="brand">智能知识库<span class="brand-sub">RAG + Agent</span></div>
+      <div class="user-area" id="user-area">
+        <div class="identity">
+          <!-- inner_text 必须恰好等于用户名：徽章刻意放在本元素之外 -->
+          <span id="auth-user"></span>
+          <span class="badge role" id="auth-role" hidden></span>
+          <span class="badge tenant" id="auth-tenant" hidden></span>
+        </div>
+        <button class="btn ghost sm hidden" id="btn-admin" onclick="openAdmin()">管理</button>
+        <button class="btn ghost sm" id="btn-logout" onclick="logout()">退出</button>
+      </div>
+    </header>
 
-    <section class="chat">
-      <div class="messages" id="messages"></div>
-      <div class="composer">
-        <div class="composer-inner">
-          <input type="text" id="question" placeholder="输入问题，例如：出差住宿标准是多少？" onkeydown="if(event.key==='Enter')ask()" />
-          <button id="ask-btn" onclick="ask()">发送</button>
+    <!-- 窄屏：把左右两栏的入口放成两个按钮，避免顶栏拥挤 -->
+    <div class="mobile-tools">
+      <button class="btn secondary sm" onclick="switchTab('convs')">会话列表</button>
+      <button class="btn secondary sm" onclick="switchTab('knowledge')">知识库</button>
+    </div>
+
+    <div class="app-main">
+      <!-- ---------- 左栏：会话 ---------- -->
+      <nav class="sidebar-left" aria-label="会话列表">
+        <div class="side-head">
+          <span class="side-title">会话</span>
+          <button class="btn ghost sm" onclick="newChat()">新建</button>
+        </div>
+        <div class="conv-list" id="conversation-list"></div>
+      </nav>
+
+      <!-- ---------- 中栏：问答 ---------- -->
+      <main class="chat">
+        <div class="messages" id="messages"></div>
+
+        <section class="empty" id="chat-empty">
+          <div class="empty-title">开始一次知识库问答</div>
+          <div>上传制度、FAQ、手册后，直接用自然语言提问，回答会标注引用来源。</div>
+          <div class="empty-action">
+            <button class="btn secondary sm" onclick="useSample('出差住宿标准是多少？')">试用示例问题</button>
+          </div>
+        </section>
+
+        <div class="composer">
+          <div class="composer-inner">
+            <textarea id="question" rows="1" placeholder="输入问题，Enter 发送 · Shift+Enter 换行"
+                      aria-label="提问输入框"></textarea>
+            <button class="btn" id="ask-btn" onclick="ask()">发送</button>
+          </div>
+          <div class="composer-hint">
+            <span id="composer-status"></span>
+            <span id="composer-tip">Enter 发送 · Shift+Enter 换行</span>
+          </div>
+        </div>
+      </main>
+
+      <!-- ---------- 右栏：知识库 / 评测 ---------- -->
+      <aside class="sidebar-right" aria-label="知识库与设置">
+        <section class="panel" id="panel-docs">
+          <div class="panel-head">
+            <span class="panel-title">知识库</span>
+            <span class="panel-count" id="doc-count"></span>
+          </div>
+
+          <div id="upload-area">
+            <label class="dropzone" id="dropzone">
+              <input type="file" id="file-input" accept=".pdf,.md,.txt,.docx,.xlsx,.csv" />
+              <span>点击选择文件，或把文件拖到这里</span>
+            </label>
+            <div id="file-preview" class="hidden"></div>
+            <button class="btn sm block" id="upload-btn" onclick="startUpload()" disabled
+                    style="margin-top:8px">上传并建立索引</button>
+            <div id="upload-hint" class="hint" style="margin-top:6px"></div>
+          </div>
+
+          <!-- viewer 走"隐藏上传入口 + 明确说明"，两种提示互斥显示 -->
+          <div id="doc-readonly" class="hint box info hidden"></div>
+
+          <input class="input" type="search" id="doc-search" placeholder="搜索文档名…"
+                 oninput="onDocSearch()" aria-label="搜索文档" />
+          <div class="doc-list" id="doc-list"></div>
+          <div class="doc-pager" id="doc-pager"></div>
+        </section>
+
+        <section class="panel hidden" id="panel-eval">
+          <div class="panel-head"><span class="panel-title">评测（管理员）</span></div>
+          <label class="field-label" for="eval-path">测试集路径</label>
+          <input class="input" type="text" id="eval-path" value="data/evaluation/test_set_smart.json" spellcheck="false" />
+          <button class="btn sm block" id="eval-run-btn" onclick="runEval()">运行评测</button>
+          <div id="eval-result"></div>
+          <div id="eval-history"></div>
+        </section>
+      </aside>
+    </div>
+
+    <!-- 窄屏底部标签栏 -->
+    <nav class="tabbar" role="tablist" aria-label="视图切换">
+      <button role="tab" data-tab="chat" aria-selected="true" onclick="switchTab('chat')">
+        <span class="tab-icon">💬</span><span>问答</span>
+      </button>
+      <button role="tab" data-tab="convs" aria-selected="false" onclick="switchTab('convs')">
+        <span class="tab-icon">🗂</span><span>会话</span>
+      </button>
+      <button role="tab" data-tab="knowledge" aria-selected="false" onclick="switchTab('knowledge')">
+        <span class="tab-icon">📚</span><span>知识库</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ===================== 弹层：重命名 / 确认删除 ===================== -->
+  <div class="modal hidden" id="modal-prompt">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
+      <h3 id="prompt-title">重命名</h3>
+      <p id="prompt-desc" class="hidden"></p>
+      <label class="field-label" for="prompt-input" id="prompt-label">新名称</label>
+      <input class="input" type="text" id="prompt-input" maxlength="80" />
+      <div id="prompt-msg" class="hint" style="margin-top:8px"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closePrompt()">取消</button>
+        <button class="btn" id="prompt-ok">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="modal-confirm">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h3 id="confirm-title">请确认</h3>
+      <p id="confirm-desc"></p>
+      <div id="confirm-msg" class="hint"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeConfirm()">取消</button>
+        <button class="btn danger" id="confirm-ok">确认删除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 弹层：管理（仅 admin） ===================== -->
+  <div class="modal hidden" id="modal-admin">
+    <div class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+      <h3 id="admin-title">管理</h3>
+      <p>仅管理员可见。所有操作都在当前租户内生效。</p>
+      <div class="admin-tabs" role="tablist">
+        <button role="tab" data-pane="docs" class="active" aria-selected="true" onclick="switchAdminPane('docs')">文档管理</button>
+        <button role="tab" data-pane="users" aria-selected="false" onclick="switchAdminPane('users')">用户管理</button>
+        <button role="tab" data-pane="eval" aria-selected="false" onclick="switchAdminPane('eval')">评测</button>
+      </div>
+
+      <div class="admin-pane" id="pane-docs">
+        <div class="form-row">
+          <input class="input" type="search" id="admin-doc-search" placeholder="按文件名筛选…" oninput="renderAdminDocs()" />
+          <button class="btn secondary sm" onclick="loadAdminDocs()">刷新</button>
+        </div>
+        <div class="doc-list" id="admin-doc-list"></div>
+        <div class="hint info">删除文档会同时删除其向量索引，<b>不可撤销</b>。</div>
+      </div>
+
+      <div class="admin-pane hidden" id="pane-users">
+        <div class="doc-list" id="admin-user-list"></div>
+        <div class="card" style="padding:12px">
+          <div class="field-label" style="margin-bottom:8px">代建账号</div>
+          <div class="form-row">
+            <input class="input" type="text" id="new-user-name" placeholder="用户名（3–50 位）" autocomplete="off" />
+            <input class="input" type="password" id="new-user-pass" placeholder="密码（6–64 位）" autocomplete="new-password" />
+            <select class="input" id="new-user-role" aria-label="角色">
+              <option value="user">成员（user）</option>
+              <option value="viewer">只读（viewer）</option>
+              <option value="admin">管理员（admin）</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+            <button class="btn sm" id="new-user-btn" onclick="createUser()">创建账号</button>
+            <span id="new-user-hint" class="hint"></span>
+          </div>
         </div>
       </div>
-    </section>
 
-    <aside class="sidebar-right">
-      <div class="right-section">
-        <h3>知识库 <span id="doc-count" style="font-weight:400;text-transform:none"></span></h3>
-        <div class="upload-row">
-          <input type="file" id="file-input" accept=".pdf,.md,.txt,.docx" onchange="onFileSelected()" />
-          <div id="file-preview" class="file-preview hidden"></div>
-          <button class="small-btn" id="upload-btn" onclick="confirmUpload()" disabled>上传并建立索引</button>
+      <div class="admin-pane hidden" id="pane-eval">
+        <p class="hint info" style="margin:0">评测会真实调用 LLM，耗时几十秒并消耗配额。</p>
+        <label class="field-label" for="admin-eval-path">测试集路径</label>
+        <input class="input" type="text" id="admin-eval-path" value="data/evaluation/test_set_smart.json" spellcheck="false" />
+        <div style="display:flex;gap:8px">
+          <button class="btn sm" id="admin-eval-btn" onclick="runEval()">运行评测</button>
+          <button class="btn secondary sm" onclick="loadEvalHistory()">刷新历史</button>
         </div>
-        <div class="doc-toolbar">
-          <input type="text" id="doc-search" placeholder="搜索文档..." oninput="onDocSearch()" />
-        </div>
-        <div class="doc-list" id="doc-list"></div>
-        <div class="doc-pager" id="doc-pager"></div>
+        <div id="admin-eval-result"></div>
+        <div id="admin-eval-history"></div>
       </div>
 
-      <div class="right-section">
-        <h3>评测</h3>
-        <button class="small-btn" onclick="runEval()" style="width:100%">运行评测</button>
-        <div id="eval-result" style="margin-top:10px"></div>
-        <div class="eval-history" id="eval-history"></div>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeAdmin()">关闭</button>
       </div>
-    </aside>
+    </div>
   </div>
 
   <script src="/marked.min.js"></script>
   <script src="/purify.min.js"></script>
   <script>
+  "use strict";
+  /* =========================================================================
+     A. 状态与常量
+     ========================================================================= */
   const BASE = "";
-  const DOC_PAGE_SIZE = 10;
-  let token = localStorage.getItem("kb_token") || "";
-  let username = localStorage.getItem("kb_user") || "";
-  let currentConvId = null;
-  let selectedFile = null;
-  let allDocs = [];
-  let docPage = 1;
-  // 流式开关：由后端 /config 告知（ENABLE_STREAM=false 时前端必须回退非流式 /ask）
-  let streamEnabled = false;
+  const DOC_PAGE_SIZE = 8;
+  const MAX_UPLOAD_MB = 20;
+  const DEFAULT_TOP_K = 3;
 
-  function $(id) { return document.getElementById(id); }
-  function authHeaders() { return token ? { "Authorization": "Bearer " + token } : {}; }
-  function escapeHtml(s) { return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-  function formatError(data) {
-    if (!data) return "请求失败";
-    if (typeof data.detail === "string") return data.detail;
-    if (Array.isArray(data.detail)) {
-      const map = { username:"用户名", password:"密码", question:"问题" };
-      return data.detail.map(e => { const f = e.loc ? e.loc[e.loc.length-1] : ""; return (map[f]||f)+"："+(e.msg||"格式不正确"); }).join("；");
+  const ROLE_LABEL = { viewer: "只读", user: "成员", admin: "管理员" };
+  const ROLE_HINT = {
+    viewer: "只读账号可以提问与查看会话，但不能上传文档。",
+    user: "成员账号可以上传文档、提问并管理会话。",
+    admin: "管理员账号还可以删除文档、运行评测并代建账号。",
+  };
+  const MODE_LABEL = { rag: "知识库检索", chat: "普通对话", agent: "工具计算" };
+
+  /** localStorage 键名集中管理，避免散落的字符串写错导致"登录状态丢失"。 */
+  const K = { token: "kb_token", user: "kb_user", role: "kb_role", tenant: "kb_tenant" };
+
+  const app = {
+    token: localStorage.getItem(K.token) || "",
+    username: localStorage.getItem(K.user) || "",
+    role: localStorage.getItem(K.role) || "user",
+    tenant: localStorage.getItem(K.tenant) || "default",
+    convId: null,
+    docs: [],
+    docPage: 1,
+    streamEnabled: false,
+    asking: false,      // 是否正在等待回答（防止重复提交）
+    uploading: false,
+  };
+
+  // 窄屏用：断点与桌面 media query 一致
+  const NARROW = window.matchMedia("(max-width: 900px)");
+  const $ = (id) => document.getElementById(id);
+
+  /* =========================================================================
+     B. API 层
+     全站请求都走这里：统一鉴权头、统一错误文案、统一 401 自动登出。
+     以前 14 处 fetch 各写一遍错误处理，导致"有的地方吞错、有的地方提示 Failed to fetch"。
+     ========================================================================= */
+  const STATUS_TEXT = {
+    400: "请求有误，请检查输入内容",
+    403: "当前账号没有权限执行该操作",
+    404: "找不到对应的资源",
+    409: "已存在同名对象",
+    413: "文件超出大小限制",
+    429: "操作过于频繁，请稍后再试",
+    500: "服务器内部错误，请稍后重试",
+  };
+
+  /** 把后端 `{detail}`（可能是字符串，也可能是 pydantic 的校验数组）翻译成人话。 */
+  function errorFromBody(status, data) {
+    const d = data && data.detail;
+    if (typeof d === "string" && d.trim()) return d;
+    if (Array.isArray(d) && d.length) {
+      const nameMap = { username: "用户名", password: "密码", question: "问题", title: "标题", role: "角色", tenant: "租户", file: "文件" };
+      return d.map((e) => {
+        const field = e && e.loc ? String(e.loc[e.loc.length - 1]) : "";
+        return (nameMap[field] || field) + "：" + (e.msg || "格式不正确");
+      }).join("；");
     }
-    return "请求失败";
-  }
-  function handle401(resp) { if (resp.status === 401) { logout(); $("login-msg").className="login-msg err"; $("login-msg").textContent="登录已失效，请重新登录"; return true; } return false; }
-  function formatSize(bytes) { if (bytes < 1024) return bytes + " B"; if (bytes < 1048576) return (bytes/1024).toFixed(1) + " KB"; return (bytes/1048576).toFixed(1) + " MB"; }
-
-  // ===== 认证 =====
-  function refreshAuthUI() {
-    if (token) { $("login-panel").classList.add("hidden"); $("app").classList.remove("hidden"); $("auth-user").textContent=username; $("btn-logout").classList.remove("hidden"); loadConversations(); loadDocuments(); loadEvalHistory(); loadRuntimeConfig(); }
-    else { $("login-panel").classList.remove("hidden"); $("app").classList.add("hidden"); $("auth-user").textContent=""; $("btn-logout").classList.add("hidden"); }
-  }
-  function logout() { token=""; username=""; currentConvId=null; localStorage.removeItem("kb_token"); localStorage.removeItem("kb_user"); refreshAuthUI(); }
-  async function doLogin() {
-    const u=$("login-username").value.trim(), p=$("login-password").value;
-    if(!u||!p){setLoginMsg("请输入用户名和密码",true);return;}
-    const resp=await fetch(BASE+"/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});
-    const data=await resp.json();
-    if(resp.ok) onAuthSuccess(data); else setLoginMsg(formatError(data),true);
-  }
-  async function doRegister() {
-    const u=$("login-username").value.trim(), p=$("login-password").value;
-    if(u.length<3){setLoginMsg("用户名至少 3 位",true);return;}
-    if(p.length<6){setLoginMsg("密码至少 6 位",true);return;}
-    const resp=await fetch(BASE+"/auth/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});
-    const data=await resp.json();
-    if(resp.ok) onAuthSuccess(data); else setLoginMsg(formatError(data),true);
-  }
-  function onAuthSuccess(data){ token=data.token; username=data.username; localStorage.setItem("kb_token",token); localStorage.setItem("kb_user",username); setLoginMsg("",false); refreshAuthUI(); }
-  function setLoginMsg(t,isErr){ $("login-msg").className="login-msg "+(isErr?"err":""); $("login-msg").textContent=t; }
-
-  // ===== 会话 =====
-  async function loadConversations() {
-    const resp=await fetch(BASE+"/conversations",{headers:authHeaders()}); if(handle401(resp))return;
-    const rows=await resp.json(); const el=$("conversation-list");
-    if(!Array.isArray(rows)||rows.length===0){ el.innerHTML='<div style="font-size:13px;color:var(--text-muted);padding:8px 10px">暂无对话</div>'; return; }
-    el.innerHTML=rows.map(r=>
-      '<div class="conv-item'+(r.conversation_id===currentConvId?" active":"")+'" onclick="openConversation(\''+r.conversation_id+'\')">'+
-        '<span class="title">'+escapeHtml(r.title||"未命名")+'</span>'+
-        '<span class="ops" onclick="event.stopPropagation()">'+
-          '<button class="icon-btn" title="重命名" onclick="renameConversation(\''+r.conversation_id+'\',\''+escapeHtml(r.title||"").replace(/'/g,"")+'\')">✎</button>'+
-          '<button class="icon-btn" title="删除" onclick="deleteConversation(\''+r.conversation_id+'\')">🗑</button>'+
-        '</span>'+
-      '</div>').join("");
-  }
-  function newChat(){ currentConvId=null; $("messages").innerHTML=welcomeHtml(); loadConversations(); }
-  async function openConversation(id){
-    currentConvId=id; loadConversations();
-    const resp=await fetch(BASE+"/conversations/"+id,{headers:authHeaders()}); if(handle401(resp))return;
-    const conv=await resp.json(); renderHistory(conv.messages||[]);
-  }
-  async function renameConversation(id, oldTitle){
-    const t=prompt("重命名会话：", oldTitle); if(t==null) return;
-    const title=t.trim(); if(!title) return;
-    const resp=await fetch(BASE+"/conversations/"+id,{method:"PATCH",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({title})});
-    if(resp.ok) loadConversations(); else alert(formatError(await resp.json()));
-  }
-  async function deleteConversation(id){
-    if(!confirm("确定删除该会话？")) return;
-    const resp=await fetch(BASE+"/conversations/"+id,{method:"DELETE",headers:authHeaders()});
-    if(resp.ok){ if(currentConvId===id) newChat(); loadConversations(); } else alert("删除失败");
+    return STATUS_TEXT[status] || "请求失败（HTTP " + status + "）";
   }
 
-  function welcomeHtml(){
-    return '<div class="msg assistant"><div class="markdown"><h1>欢迎使用企业智能知识助手</h1><p>上传企业的制度、FAQ、手册，然后直接用自然语言提问。回答会<strong>标注引用来源</strong>，知识库没有的内容会<strong>明确拒答</strong>。</p><p>试试：</p><ul><li>「出差住宿标准是多少？」</li><li>「年假有几天？」</li></ul></div></div>';
-  }
-  function renderHistory(messages){
-    if(!messages.length){ $("messages").innerHTML=welcomeHtml(); return; }
-    let html="";
-    for(const m of messages){
-      if(m.role==="user") html+='<div class="msg user"><div class="bubble">'+escapeHtml(m.content)+'</div></div>';
-      else html+='<div class="msg assistant">'+renderAssistant(m.content||"", m.sources||[], "")+'</div>';
-    }
-    $("messages").innerHTML=html; scrollToBottom();
-  }
-  function renderAssistant(answer, sources, mode){
-    const modeTag = mode ? '<div class="mode-tag '+mode+'">'+escapeHtml(mode)+'</div>' : '';
-    return modeTag + '<div class="markdown">'+renderMarkdown(answer)+'</div>'+
-      '<div class="answer-meta"><span></span><button class="copy-btn" onclick="copyText(this)">复制</button></div>'+
-      renderSources(sources);
-  }
-  // LLM 回答经 marked 渲染后必须消毒再入 DOM：文档里若含 HTML（如 <img onerror>）
-  // 且被模型回显，直接 innerHTML 会执行脚本（见 docs/review-v1-audit.md §2.12）。
-  function renderMarkdown(text){
-    if(typeof marked==="undefined") return escapeHtml(text);
-    const html = marked.parse(text||"", {breaks:true, gfm:true});
-    if(typeof DOMPurify!=="undefined") return DOMPurify.sanitize(html);
-    return escapeHtml(text);   // 消毒库缺失时降级为纯文本，绝不裸渲染
-  }
-  function renderSources(sources){
-    if(!sources||!sources.length) return "";
-    const items=sources.map(s=>
-      '<details><summary>'+escapeHtml(s.document_name)+' <span style="color:var(--text-muted)">('+(s.score!=null?s.score.toFixed(3):"")+')</span></summary>'+
-      '<div class="snippet">'+escapeHtml(s.content||"")+'</div></details>').join("");
-    return '<div class="sources">引用来源：'+items+'</div>';
-  }
-  function copyText(btn){
-    const parent=btn.closest(".msg.assistant"); const md=parent.querySelector(".markdown");
-    const text=md ? md.innerText : "";
-    navigator.clipboard.writeText(text).then(()=>{ btn.textContent="已复制"; setTimeout(()=>btn.textContent="复制",1500); });
-  }
-  function scrollToBottom(){ const el=$("messages"); el.scrollTop=el.scrollHeight; }
-
-  // ===== 提问 =====
-  /** 运行时能力探测：拿不到就保守地按"不支持流式"处理，走原来的 /ask。 */
-  async function loadRuntimeConfig(){
-    try{
-      const resp=await fetch(BASE+"/config",{headers:authHeaders()});
-      if(resp.ok){ const cfg=await resp.json(); streamEnabled=!!cfg.enable_stream; }
-      else { streamEnabled=false; }
-    }catch(e){ streamEnabled=false; }
+  class ApiError extends Error {
+    constructor(message, status) { super(message); this.status = status; }
   }
 
-  async function ask(){
-    const q=$("question").value.trim(); if(!q) return;
-    $("ask-btn").disabled=true; $("question").value="";
-    const m=$("messages");
-    m.insertAdjacentHTML("beforeend",'<div class="msg user"><div class="bubble">'+escapeHtml(q)+'</div></div>');
-    m.insertAdjacentHTML("beforeend",'<div class="msg assistant"><div class="markdown" style="color:var(--text-muted)">思考中...</div></div>');
-    // 直接持有本轮回答气泡的引用（不能用固定 id：多轮提问时 id 会重复，$() 会拿到上一轮的元素）
-    const box=m.lastElementChild;
-    scrollToBottom();
-    try{
-      if(streamEnabled && await askStream(q, box)) { loadConversations(); return; }
-      await askNonStream(q, box);   // 回退：开关关闭、或流式在收到任何内容前就失败
-    }finally{ $("ask-btn").disabled=false; $("question").focus(); }
+  function clearSession() {
+    app.token = ""; app.username = ""; app.role = "user"; app.tenant = "default";
+    app.convId = null; app.asking = false;
+    Object.values(K).forEach((k) => localStorage.removeItem(k));
+  }
+
+  function logout(msg) {
+    clearSession();
+    // 必须走 refreshAuthUI：它会同时切换「登录页 / 主应用」两块面板。
+    // 只调 renderIdentity 会让登出后停在空壳主界面上（既没登录表单也没用户名）。
+    refreshAuthUI();
+    $("messages").innerHTML = "";
+    renderEmpty();
+    $("conversation-list").innerHTML = "";
+    $("doc-list").innerHTML = ""; $("doc-count").textContent = ""; $("doc-pager").innerHTML = "";
+    closeAdmin(); closePrompt(); closeConfirm();
+    if (msg) setLoginMsg(msg, true);
+    setTimeout(() => $("login-username").focus(), 30);
   }
 
   /**
-   * 流式提问：fetch + ReadableStream 手工解析 SSE（EventSource 不支持 POST，故不能用它）。
-   * @returns {boolean} 是否成功消费完整条流（false 表示"还什么都没渲染，可以安全回退"）
+   * 统一请求入口。
+   * @returns {Promise<{resp: Response, data: any}>} 调用方用 `resp.ok` 判业务成败（403 等业务错误不抛异常）。
+   * @throws {ApiError} 网络不可用 / 401（已自动登出）时抛出。
    */
-  async function askStream(q, box){
-    let answer="", mode="", received=false, completed=false, errMsg="";
-    try{
-      const resp=await fetch(BASE+"/ask/stream",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({question:q,conversation_id:currentConvId,top_k:3})});
-      if(handle401(resp)) return true;   // 已登出，交回外层
-      if(resp.status===404||resp.status===405){ return false; }   // 后端没挂 /ask/stream
-      if(!resp.ok || !resp.body){ return false; }
+  async function api(path, opts = {}) {
+    const headers = Object.assign({}, opts.headers || {});
+    if (app.token) headers["Authorization"] = "Bearer " + app.token;
+    const isForm = opts.body instanceof FormData;
+    if (opts.body != null && !isForm && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+    let resp;
+    try {
+      resp = await fetch(BASE + path, Object.assign({}, opts, { headers }));
+    } catch (e) {
+      if (e && e.name === "AbortError") throw e;
+      throw new ApiError("网络不可用，请检查网络连接后重试", 0);
+    }
+    // 只有"带着令牌仍被拒"才等于会话失效。登录接口本身就是用 401 表示密码错误，
+    // 若无条件登出，用户会把「用户名或密码错误」看成「登录已失效」，完全误导。
+    if (resp.status === 401 && app.token) {
+      logout("登录已失效，请重新登录");
+      throw new ApiError("登录已失效，请重新登录", 401);
+    }
+    let data = null;
+    try { data = await resp.clone().json(); } catch (e) { data = null; }
+    if (!resp.ok && data === null) {
+      try { data = { detail: await resp.text() }; } catch (e) { data = null; }
+    }
+    return { resp: resp, data: data };
+  }
 
-      let aborted=false;
+  /** 取业务数据；失败时抛出可读中文错误（供 async 动作统一 catch 展示）。 */
+  async function apiData(path, opts) {
+    const r = await api(path, opts);
+    if (!r.resp.ok) throw new ApiError(errorFromBody(r.resp.status, r.data), r.resp.status);
+    return r.data;
+  }
+
+  /** SSE 用：需要自己读 body 流，所以只借用鉴权头与 401 处理。 */
+  function authHeaders() { return app.token ? { "Authorization": "Bearer " + app.token } : {}; }
+
+  /* =========================================================================
+     C. 通用渲染工具
+     ========================================================================= */
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  /**
+   * Markdown → 安全 HTML。
+   * 必须消毒：文档内容可能含 HTML/脚本，被模型回显后直接 innerHTML 会执行脚本
+   * （历史问题见 docs/review-v1-audit.md §2.12）。消毒库缺失时降级为纯文本，绝不裸渲染。
+   */
+  function renderMarkdown(text) {
+    if (typeof marked === "undefined") return escapeHtml(text);
+    const raw = marked.parse(String(text || ""), { breaks: true, gfm: true });
+    if (typeof DOMPurify === "undefined") return escapeHtml(text);
+    return DOMPurify.sanitize(raw, {
+      FORBID_TAGS: ["style", "form", "input", "iframe"],
+      FORBID_ATTR: ["style"],
+      ALLOW_DATA_ATTR: false,
+    });
+  }
+
+  function formatSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+
+  function formatTime(s) {
+    const t = String(s || "").replace("T", " ");
+    return t.length >= 16 ? t.slice(5, 16) : t;
+  }
+
+  function setHint(el, text, kind) {
+    if (typeof el === "string") el = $(el);
+    if (!el) return;
+    el.className = "hint" + (text ? " " + (kind || "info") : "");
+    el.innerHTML = text ? escapeHtml(text) : "";
+  }
+
+  function scrollToBottom(force) {
+    const el = $("messages");
+    if (force || nearBottom()) {
+      el.scrollTop = el.scrollHeight;
+      hideJump();
+    }
+  }
+  function nearBottom() {
+    const el = $("messages");
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }
+  function showJump() { $("chat-empty").classList.add("hidden"); $("jump-bottom").classList.remove("hidden"); }
+  function hideJump() { $("jump-bottom").classList.add("hidden"); }
+
+  /** 有消息时隐藏"开始提问"引导，没有消息时恢复。 */
+  function renderEmpty() {
+    const has = $("messages").querySelector(".msg") !== null;
+    $("chat-empty").classList.toggle("hidden", has);
+  }
+
+  /* =========================================================================
+     D. 身份与视图切换
+     ========================================================================= */
+  function renderIdentity() {
+    const loggedIn = !!app.token;
+    $("auth-user").textContent = loggedIn ? app.username : "";
+    $("user-area").classList.toggle("invisible", !loggedIn);
+
+    const roleEl = $("auth-role");
+    roleEl.hidden = !loggedIn;
+    roleEl.textContent = loggedIn ? (ROLE_LABEL[app.role] || app.role) : "";
+    roleEl.className = "badge role " + (app.role || "user");
+
+    const tenantEl = $("auth-tenant");
+    const showTenant = loggedIn && app.tenant && app.tenant !== "default";
+    tenantEl.hidden = !showTenant;
+    tenantEl.textContent = showTenant ? "租户 " + app.tenant : "";
+
+    const isAdmin = loggedIn && app.role === "admin";
+    $("btn-admin").classList.toggle("hidden", !isAdmin);
+    $("panel-eval").classList.toggle("hidden", !isAdmin);
+    if (!isAdmin) closeAdmin();
+
+    const canUpload = loggedIn && (app.role === "user" || app.role === "admin");
+    $("upload-area").classList.toggle("hidden", !canUpload);
+    const roEl = $("doc-readonly");
+    roEl.classList.toggle("hidden", !(loggedIn && !canUpload));
+    if (loggedIn && !canUpload) {
+      roEl.textContent = "只读账号无法上传文档，请联系管理员开通成员账号。";
+    }
+    setHint($("composer-status"), loggedIn ? (ROLE_HINT[app.role] || "") : "", "info");
+  }
+
+  function refreshAuthUI() {
+    const loggedIn = !!app.token;
+    $("login-panel").classList.toggle("hidden", loggedIn);
+    $("app").classList.toggle("hidden", !loggedIn);
+    renderIdentity();
+    if (!loggedIn) {
+      // 登出后把令牌相关的输入也清掉（尤其是租户）：留着它会让下一次注册/登录
+      // 静默落到上一个用户的租户里，是最难排查的一类"看起来登错了"。
+      $("login-password").value = "";
+      $("login-tenant").value = "";
+      return;
+    }
+    $("messages").innerHTML = "";
+    renderEmpty();
+    loadRuntimeConfig();
+    loadConversations();
+    loadDocuments();
+    if (app.role === "admin") loadEvalHistory();
+    setTimeout(() => { if (!NARROW.matches) $("question").focus(); }, 30);
+  }
+
+  function switchTab(tab) {
+    $("app").dataset.tab = tab;
+    document.querySelectorAll(".tabbar button").forEach((b) => {
+      b.setAttribute("aria-selected", String(b.dataset.tab === tab));
+    });
+    if (tab === "chat") {
+      setTimeout(() => $("question").focus(), 20);
+    } else if (tab === "knowledge") {
+      loadDocuments();
+    }
+  }
+
+  function switchAdminPane(pane) {
+    ["docs", "users", "eval"].forEach((p) => {
+      $("pane-" + p).classList.toggle("hidden", p !== pane);
+    });
+    document.querySelectorAll(".admin-tabs button").forEach((b) => {
+      const on = b.dataset.pane === pane;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", String(on));
+    });
+    if (pane === "docs") loadAdminDocs();
+    if (pane === "users") loadUsers();
+    if (pane === "eval") loadEvalHistory();
+  }
+
+  function useSample(q) {
+    $("question").value = q;
+    autoGrow();
+    $("question").focus();
+  }
+
+  /* =========================================================================
+     E. 认证
+     ========================================================================= */
+  function setLoginMsg(text, isErr) {
+    const el = $("login-msg");
+    el.className = "hint" + (text ? " " + (isErr ? "err" : "ok") : "");
+    el.textContent = text || "";
+  }
+
+  function setLoginBusy(busy) {
+    $("login-btn").disabled = busy;
+    document.querySelectorAll("#login-panel .login-btns button").forEach((b) => { b.disabled = busy; });
+    if (!busy) $("login-btn").textContent = "登录";
+  }
+
+  function onAuthSuccess(data) {
+    app.token = data.token;
+    app.username = data.username;
+    app.role = data.role || "user";
+    app.tenant = data.tenant_id || "default";
+    localStorage.setItem(K.token, app.token);
+    localStorage.setItem(K.user, app.username);
+    localStorage.setItem(K.role, app.role);
+    localStorage.setItem(K.tenant, app.tenant);
+    setLoginMsg("", false);
+    refreshAuthUI();
+  }
+
+  async function submitAuth(path, label) {
+    const u = $("login-username").value.trim();
+    const p = $("login-password").value;
+    const tenant = $("login-tenant").value.trim();
+    if (!u || !p) { setLoginMsg("请输入用户名和密码", true); return; }
+    if (label === "注册") {
+      if (u.length < 3) { setLoginMsg("用户名至少 3 位", true); return; }
+      if (p.length < 6) { setLoginMsg("密码至少 6 位", true); return; }
+    }
+    setLoginBusy(true);
+    setLoginMsg(label + "中…", false);
+    try {
+      const body = { username: u, password: p };
+      if (tenant) body.tenant = tenant;
+      const data = await apiData(path, { method: "POST", body: JSON.stringify(body) });
+      setLoginMsg("", false);
+      onAuthSuccess(data);
+    } catch (e) {
+      setLoginMsg(e.message || (label + "失败"), true);
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  function doLogin() { return submitAuth("/auth/login", "登录"); }
+  function doRegister() { return submitAuth("/auth/register", "注册"); }
+
+  /* =========================================================================
+     F. 会话
+     ========================================================================= */
+  async function loadConversations() {
+    const el = $("conversation-list");
+    try {
+      const rows = await apiData("/conversations");
+      if (!Array.isArray(rows)) throw new ApiError("会话列表格式异常", 0);
+      if (!rows.length) {
+        el.innerHTML = '<div class="empty"><div class="empty-title">还没有会话</div>' +
+          '<div>提一个问题就会自动创建会话</div></div>';
+        return;
+      }
+      el.innerHTML = rows.map((r) => {
+        const active = r.conversation_id === app.convId;
+        const n = r.message_count || 0;
+        return '<div class="conv-item' + (active ? " active" : "") + '" tabindex="0" role="button"' +
+          ' data-id="' + escapeHtml(r.conversation_id) + '"' +
+          ' onclick="openConversation(this.dataset.id)"' +
+          ' onkeydown="if(event.key===\'Enter\')openConversation(this.dataset.id)">' +
+          '<span class="conv-main"><span class="conv-title">' + escapeHtml(r.title || "未命名会话") + '</span>' +
+          '<span class="conv-meta">' + formatTime(r.updated_at || r.created_at) + " · " + n + ' 条消息</span></span>' +
+          '<span class="conv-ops">' +
+          '<button class="icon-btn" title="重命名" onclick="event.stopPropagation();renameConversation(\'' + escapeHtml(r.conversation_id) + '\')">重命名</button>' +
+          '<button class="icon-btn" title="删除会话" onclick="event.stopPropagation();deleteConversation(\'' + escapeHtml(r.conversation_id) + '\')">删除</button>' +
+          '</span></div>';
+      }).join("");
+    } catch (e) {
+      el.innerHTML = '<div class="hint box err">会话列表加载失败：' + escapeHtml(e.message) + "</div>";
+    }
+  }
+
+  function newChat() {
+    app.convId = null;
+    $("messages").innerHTML = "";
+    renderEmpty();
+    $("conversation-list").querySelectorAll(".conv-item").forEach((n) => n.classList.remove("active"));
+    switchTab("chat");
+    $("question").focus();
+  }
+
+  async function openConversation(id) {
+    app.convId = id;
+    $("conversation-list").querySelectorAll(".conv-item").forEach((n) => {
+      n.classList.toggle("active", n.dataset.id === id);
+    });
+    const box = $("messages");
+    box.innerHTML = '<div class="msg assistant"><div class="pending"><span class="spinner"></span>正在载入会话…</div></div>';
+    renderEmpty();
+    switchTab("chat");
+    try {
+      const conv = await apiData("/conversations/" + encodeURIComponent(id));
+      renderHistory(conv.messages || []);
+      loadConversations();
+    } catch (e) {
+      box.innerHTML = '<div class="msg assistant"><div class="hint box err">' +
+        escapeHtml(e.message) + "</div></div>";
+    }
+  }
+
+  function renameConversation(id) {
+    openPrompt({
+      title: "重命名会话",
+      label: "会话标题（1–80 字）",
+      value: currentConvTitle(id),
+      ok: "保存",
+      onSubmit: async (value) => {
+        await apiData("/conversations/" + encodeURIComponent(id), {
+          method: "PATCH", body: JSON.stringify({ title: value }),
+        });
+        await loadConversations();
+      },
+    });
+  }
+
+  function currentConvTitle(id) {
+    const node = $("conversation-list").querySelector('.conv-item[data-id="' + id + '"] .conv-title');
+    return node ? node.textContent : "";
+  }
+
+  function deleteConversation(id) {
+    openConfirm({
+      title: "删除会话",
+      desc: "将删除该会话及其全部消息，删除后不可撤销。",
+      ok: "删除",
+      onConfirm: async () => {
+        await apiData("/conversations/" + encodeURIComponent(id), { method: "DELETE" });
+        if (app.convId === id) newChat();
+        await loadConversations();
+      },
+    });
+  }
+
+  function renderHistory(messages) {
+    if (!messages.length) {
+      $("messages").innerHTML = "";
+      renderEmpty();
+      return;
+    }
+    $("messages").innerHTML = messages.map((m) => {
+      if (m.role === "user") {
+        return '<div class="msg user"><div class="bubble">' + escapeHtml(m.content || "") + "</div></div>";
+      }
+      const mode = m.mode || "";
+      return '<div class="msg assistant"><div class="bubble-inner">' +
+        renderAssistant(m.content || "", m.sources || [], mode) + "</div></div>";
+    }).join("");
+    renderEmpty();
+    scrollToBottom(true);
+  }
+
+  /* =========================================================================
+     G. 消息渲染
+     ========================================================================= */
+  function renderAssistant(answer, sources, mode, opts) {
+    opts = opts || {};
+    const tag = mode
+      ? '<div class="mode-tag ' + escapeHtml(mode) + '">' + escapeHtml(mode) + "</div>" +
+        '<span class="mode-name">' + escapeHtml(MODE_LABEL[mode] || "回答") + "</span>"
+      : "";
+    // 秒数只在真的等了一会儿时才有信息量：0 秒写出来反而像出错
+    const secs = opts.seconds != null && Number(opts.seconds) > 0 ? opts.seconds + " 秒" : "不到 1 秒";
+    const meta = '<div class="answer-meta">' +
+      (opts.seconds != null ? '<span class="meta-text">用时 ' + secs + "</span>" : "<span></span>") +
+      '<span class="spacer"></span>' +
+      (opts.showCopy === false ? "" : '<button class="btn ghost sm copy-btn" onclick="copyAnswer(this)">复制回答</button>') +
+      "</div>";
+    return tag + '<div class="markdown">' + renderMarkdown(answer) + "</div>" + meta + renderSources(sources);
+  }
+
+  /**
+   * 引用来源：默认折叠成一行"引用来源 (n)"，点击展开。
+   * 条目少（≤3）时默认展开 —— 这正是后端默认 top_k 的场景，
+   * 用户点一下就能核对依据，比再点一次展开更省事。
+   */
+  function renderSources(sources) {
+    if (!sources || !sources.length) return "";
+    const items = sources.map((s) => {
+      const name = s.document_name || s.document_id || "未知文档";
+      const score = (s.score == null || isNaN(Number(s.score))) ? "—" : Number(s.score).toFixed(4);
+      return '<div class="source-item">' +
+        '<div class="source-head"><span class="source-name">' + escapeHtml(name) + "</span>" +
+        '<span class="source-score">相似度 ' + score + "</span></div>" +
+        '<div class="source-snippet">' + escapeHtml(s.content || "（无片段内容）") + "</div>" +
+        "</div>";
+    }).join("");
+    const open = sources.length <= 3 ? " open" : "";
+    return '<details class="sources"' + open + ">" +
+      '<summary class="sources-summary"><span class="caret">▶</span>引用来源 (' + sources.length + ")</summary>" +
+      '<div class="sources-body">' + items + "</div></details>";
+  }
+
+  function copyAnswer(btn) {
+    const md = btn.closest(".msg.assistant").querySelector(".markdown");
+    const text = md ? md.innerText : "";
+    const done = () => { btn.textContent = "已复制"; setTimeout(() => { btn.textContent = "复制回答"; }, 1500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+    } else {
+      fallbackCopy(text, done);
+    }
+  }
+  function fallbackCopy(text, done) {
+    // 无 HTTPS / 无剪贴板权限时的兜底：老式 execCommand
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); done(); } catch (e) { /* 复制不可用时静默 */ }
+    document.body.removeChild(ta);
+  }
+
+  /* =========================================================================
+     H. 提问（流式优先，失败自动回退非流式）
+     ========================================================================= */
+  async function loadRuntimeConfig() {
+    try {
+      const cfg = await apiData("/config");
+      app.streamEnabled = !!cfg.enable_stream;
+    } catch (e) {
+      app.streamEnabled = false;   // 探测不到就保守按"不支持流式"，走 /ask
+    }
+  }
+
+  function autoGrow() {
+    const ta = $("question");
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 150) + "px";
+  }
+
+  function onComposerKey(e) {
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(); }
+  }
+
+  function addUserBubble(text) {
+    $("messages").insertAdjacentHTML("beforeend",
+      '<div class="msg user"><div class="bubble">' + escapeHtml(text) + "</div></div>");
+    renderEmpty();
+  }
+
+  function addPendingBubble() {
+    $("messages").insertAdjacentHTML("beforeend",
+      '<div class="msg assistant"><div class="bubble-inner">' +
+      '<div class="pending" data-testid="pending"><span class="spinner"></span>' +
+      '<span class="pending-text">思考中… 0 秒</span></div></div></div>');
+    const box = $("messages").lastElementChild;
+    let seconds = 0;
+    const timer = setInterval(() => {
+      seconds += 1;
+      const t = box.querySelector(".pending-text");
+      if (t) t.textContent = "思考中… " + seconds + " 秒";
+    }, 1000);
+    return { box: box, stop: () => clearInterval(timer), seconds: () => seconds };
+  }
+
+  async function ask() {
+    if (app.asking) return;                       // 防重复提交
+    const q = $("question").value.trim();
+    if (!q) { $("question").focus(); return; }
+    if (q.length > 2000) { setHint("composer-status", "问题过长（上限 2000 字）", "err"); return; }
+
+    app.asking = true;
+    $("ask-btn").disabled = true;
+    $("ask-btn").textContent = "发送中";
+    setHint("composer-status", "正在生成回答…", "info");
+    $("question").value = "";
+    autoGrow();
+
+    addUserBubble(q);
+    const pending = addPendingBubble();
+    const box = pending.box;
+    scrollToBottom(true);
+    switchTab("chat");
+
+    try {
+      let ok = false;
+      if (app.streamEnabled) ok = await askStream(q, box, pending);
+      if (!ok) await askOnce(q, box, pending);
+    } catch (e) {
+      if (e && e.name === "ApiError" && e.status === 401) return;   // 已自动登出
+      fillAssistant(box, null, "出错了：" + (e && e.message ? e.message : "未知错误"), true);
+    } finally {
+      pending.stop();
+      app.asking = false;
+      $("ask-btn").disabled = false;
+      $("ask-btn").textContent = "发送";
+      setHint("composer-status", "", "info");
+      if (!NARROW.matches) $("question").focus();
+      renderIdentity();
+    }
+  }
+
+  /** 非流式 /ask：也是流式不可用时的兜底路径。 */
+  async function askOnce(q, box, pending) {
+    try {
+      const data = await apiData("/ask", {
+        method: "POST",
+        body: JSON.stringify({ question: q, conversation_id: app.convId, top_k: DEFAULT_TOP_K }),
+      });
+      if (data.conversation_id) app.convId = data.conversation_id;
+      fillAssistant(box, data.mode || "", data.answer || "", false, {
+        sources: data.sources || [], seconds: pending ? pending.seconds() : null,
+      });
+      loadConversations();
+    } catch (e) {
+      if (e && e.status === 401) throw e;
+      fillAssistant(box, "", e && e.message ? e.message : "请求失败", true);
+    }
+  }
+
+  /** 终态渲染：无论是流式还是非流式，都收敛到这一个函数，避免两套 DOM 结构。 */
+  function fillAssistant(box, mode, text, isError, extra) {
+    extra = extra || {};
+    box.innerHTML = '<div class="bubble-inner">' +
+      renderAssistant(text, extra.sources || [], mode || "", {
+        seconds: extra.seconds != null ? extra.seconds : null,
+        showCopy: !isError,
+      }) + "</div>";
+    if (isError) {
+      const md = box.querySelector(".markdown");
+      if (md) md.classList.add("err");
+    }
+    renderEmpty();
+    if (nearBottom()) scrollToBottom(true); else showJump();
+  }
+
+  /**
+   * 流式提问：`fetch` + `ReadableStream` 手工解析 SSE。
+   * 不能用 EventSource —— 它只支持 GET，无法带 Authorization 头。
+   * @returns {Promise<boolean>} 是否已完整处理（false = 一个字都没收到，可安全回退 /ask）
+   */
+  async function askStream(q, box, pending) {
+    let answer = "", mode = "", sources = null, completed = false;
+    let received = false, serverError = "";
+    const ctrl = new AbortController();
+    try {
+      const resp = await fetch(BASE + "/ask/stream", {
+        method: "POST",
+        headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+        body: JSON.stringify({ question: q, conversation_id: app.convId, top_k: DEFAULT_TOP_K }),
+        signal: ctrl.signal,
+      });
+      if (resp.status === 401) { logout("登录已失效，请重新登录"); throw new ApiError("登录已失效", 401); }
+      // 404/405 = 后端关闭了流式（ENABLE_STREAM=false），静默回退 /ask
+      if (resp.status === 404 || resp.status === 405) return false;
+      if (!resp.ok || !resp.body) return false;
+      if (pending) { const t = box.querySelector(".pending-text"); if (t) t.textContent = "思考中…"; }
+
       await readSSE(resp.body, (ev, data) => {
-        if(aborted) return;
-        if(ev==="meta"){
-          mode=data.mode||"";
-          if(data.conversation_id){ currentConvId=data.conversation_id; }
-        } else if(ev==="delta"){
-          received=true;
-          answer+=data.text||"";
-          renderStreamDelta(box, answer);
-          scrollToBottom();
-        } else if(ev==="sources"){
-          box.dataset.sources=JSON.stringify(data.sources||[]);
-          box.dataset.mode=mode;
-          box.innerHTML=renderAssistant(answer, data.sources||[], mode);
-        } else if(ev==="done"){
-          completed=true;
-          if(!box.dataset.sources) box.innerHTML=renderAssistant(answer, [], mode);
-        } else if(ev==="error"){
-          // 服务端明确上报的失败：这里已经渲染过内容，直接报错，**不再回退**（否则会重复提问/重复落库）
-          errMsg=data.detail||"流式问答失败";
-          aborted=true;
+        if (completed || serverError) return;
+        if (ev === "meta") {
+          mode = data.mode || "";
+          if (data.conversation_id) app.convId = data.conversation_id;
+        } else if (ev === "delta") {
+          received = true;
+          answer += (data.text || "");
+          // 首个增量到达：换成正常的回答 DOM（之后只更新 markdown，避免整体重建导致选中丢失）
+          if (!box.querySelector(".answer-body")) {
+            box.innerHTML = '<div class="bubble-inner answer-body">' +
+              '<div class="mode-tag ' + escapeHtml(mode) + '">' + escapeHtml(mode) + "</div>" +
+              (MODE_LABEL[mode] ? '<span class="mode-name">' + escapeHtml(MODE_LABEL[mode]) + "</span>" : "") +
+              '<div class="markdown"></div>' +
+              '<div class="answer-meta"><span></span><span class="spacer"></span></div></div>';
+          }
+          const md = box.querySelector(".markdown");
+          if (md) md.innerHTML = renderMarkdown(answer);
+          if (nearBottom()) scrollToBottom(true);
+        } else if (ev === "sources") {
+          sources = data.sources || [];
+        } else if (ev === "error") {
+          serverError = data.detail || "流式问答失败";
+        } else if (ev === "done") {
+          completed = true;
         }
       });
-      if(errMsg){ box.innerHTML='<div class="markdown err">'+escapeHtml(errMsg)+'</div>'; return true; }
-      if(completed){ scrollToBottom(); return true; }
-      // 流提前结束（没收到 done）：已渲染的内容保留，并给出可见提示
-      if(received){ box.insertAdjacentHTML("beforeend",'<div class="markdown err">流式响应提前结束，内容可能不完整。</div>'); return true; }
+      if (serverError) {
+        fillAssistant(box, mode, serverError, true);
+        return true;   // 服务端已明确报错：回退会造成重复提问 / 重复落库
+      }
+      if (completed) {
+        fillAssistant(box, mode, answer, false, { sources: sources || [], seconds: pending ? pending.seconds() : null });
+        loadConversations();
+        return true;
+      }
+      if (received) {
+        // 流提前结束：保留已渲染内容并明确告知，不静默假装成功
+        fillAssistant(box, mode, answer, false, { sources: sources || [] });
+        box.insertAdjacentHTML("beforeend", '<div class="hint err">流式响应提前结束，内容可能不完整。</div>');
+        loadConversations();
+        return true;
+      }
       return false;
-    }catch(e){
-      if(received){
-        // 已经渲染过增量：不能用回退再问一次（会重复计费/重复落库），只报错
-        box.innerHTML='<div class="markdown err">流式输出中断：'+escapeHtml(e&&e.message?e.message:"未知错误")+'</div>';
+    } catch (e) {
+      if (e && e.name === "ApiError") throw e;
+      if (received) {
+        // 已经渲染过增量：不能回退再问一次（会重复计费、重复落库）
+        fillAssistant(box, mode, answer, false, { sources: sources || [] });
+        box.insertAdjacentHTML("beforeend", '<div class="hint err">流式输出中断：' +
+          escapeHtml(e && e.message ? e.message : "网络异常") + "</div>");
         return true;
       }
       return false;   // 一个字都没收到 → 安全回退非流式
+    } finally {
+      try { ctrl.abort(); } catch (e) { /* 读取已结束，忽略 */ }
     }
   }
 
-  /** 逐段渲染：每来一段就重渲染一次 markdown（内容不大，开销可接受）。 */
-  function renderStreamDelta(box, text){
-    const md=box.querySelector(".markdown");
-    if(md){ md.innerHTML=renderMarkdown(text); md.style.color=""; }
-    else { box.innerHTML='<div class="markdown">'+renderMarkdown(text)+'</div>'; }
-  }
-
-  /** 极简 SSE 解析：按 \n\n 切帧，取出 event / data 后回调。buffer 保证跨 chunk 的半帧不被丢掉。 */
-  async function readSSE(body, onEvent){
-    const reader=body.getReader();
-    const decoder=new TextDecoder();
-    let buffer="";
-    for(;;){
-      const {done, value}=await reader.read();
-      if(done) break;
-      buffer+=decoder.decode(value, {stream:true});
+  /**
+   * SSE 解析：按空行切帧（兼容 \r\n），event/data 按规范拼接。
+   * buffer 保留跨 chunk 的半条事件 —— 这是最容易写错的地方（丢半帧会偶发丢字）。
+   */
+  async function readSSE(body, onEvent) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r\n/g, "\n");
       let idx;
-      while((idx=buffer.indexOf("\n\n"))>=0){
-        const frame=buffer.slice(0,idx); buffer=buffer.slice(idx+2);
-        let ev="message", raw=null;
-        for(const line of frame.split("\n")){
-          if(line.startsWith("event:")) ev=line.slice(6).trim();
-          else if(line.startsWith("data:")) raw=(raw===null?"":raw)+line.slice(5).trim();
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const frame = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        let name = "message";
+        const dataLines = [];
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) name = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
         }
-        if(raw===null) continue;
-        let data={};
-        try{ data=JSON.parse(raw); }catch(e){ data={text:raw}; }
-        await onEvent(ev, data);
+        if (!dataLines.length) continue;
+        const raw = dataLines.join("\n");
+        let data = {};
+        try { data = JSON.parse(raw); } catch (e) { data = { text: raw }; }
+        await onEvent(name, data);
       }
     }
   }
 
-  /** 非流式回退：原 /ask 逻辑保持不变。 */
-  async function askNonStream(q, box){
-    try{
-      const resp=await fetch(BASE+"/ask",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({question:q,conversation_id:currentConvId,top_k:3})});
-      if(handle401(resp))return;
-      const data=await resp.json();
-      if(!resp.ok){ box.innerHTML='<div class="markdown err">'+formatError(data)+'</div>'; return; }
-      currentConvId=data.conversation_id;
-      box.innerHTML=renderAssistant(data.answer, data.sources||[], data.mode||"");
-      scrollToBottom(); loadConversations();
-    }catch(e){ box.innerHTML='<div class="markdown err">网络错误：'+escapeHtml(e.message)+'</div>'; }
-  }
-
-  // ===== 知识库 =====
-  function onFileSelected(){
-    const f=$("file-input").files[0];
-    if(!f){ selectedFile=null; $("file-preview").classList.add("hidden"); $("upload-btn").disabled=true; return; }
-    selectedFile=f;
-    const pv=$("file-preview");
-    pv.innerHTML='<div class="fp-name">'+escapeHtml(f.name)+'</div><div class="fp-meta">'+formatSize(f.size)+' · '+(f.name.split(".").pop()||"").toUpperCase()+'</div><div class="fp-text" id="fp-text">读取预览中...</div>'+
-      '<div class="fp-actions"><button class="small-btn danger" onclick="cancelUpload()">取消</button></div>';
-    pv.classList.remove("hidden");
-    $("upload-btn").disabled=false;
-    if(/\.(md|txt)$/i.test(f.name)){
-      const reader=new FileReader();
-      reader.onload=e=>{ $("fp-text").textContent=String(e.target.result).slice(0,600)+(String(e.target.result).length>600?"\n…（仅预览前 600 字）":""); };
+  /* =========================================================================
+     I. 知识库（上传 / 列表 / 删除）
+     ========================================================================= */
+  function onFileSelected() {
+    const f = $("file-input").files && $("file-input").files[0];
+    const pv = $("file-preview");
+    if (!f) { pv.classList.add("hidden"); pv.innerHTML = ""; $("upload-btn").disabled = true; return; }
+    if (f.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      $("file-input").value = "";
+      setHint("upload-hint", "文件超过上限 " + MAX_UPLOAD_MB + " MB", "err");
+      return;
+    }
+    setHint("upload-hint", "", "info");
+    const ext = (f.name.split(".").pop() || "").toUpperCase();
+    pv.className = "file-pill";
+    pv.innerHTML = '<span class="fp-body"><span class="fp-name">' + escapeHtml(f.name) + "</span>" +
+      '<span class="fp-meta">' + formatSize(f.size) + " · " + escapeHtml(ext) + "</span></span>" +
+      '<button class="icon-btn" onclick="clearFile()" title="移除">移除</button>';
+    const preview = document.createElement("div");
+    preview.className = "file-preview-text";
+    preview.textContent = "读取预览中…";
+    pv.appendChild(preview);
+    $("upload-btn").disabled = false;
+    if (/\.(md|txt|csv)$/i.test(f.name)) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = String(e.target.result || "");
+        preview.textContent = text.slice(0, 600) + (text.length > 600 ? "\n…（仅预览前 600 字）" : "");
+      };
+      reader.onerror = () => { preview.textContent = "（无法预览，仍可直接上传）"; };
       reader.readAsText(f);
     } else {
-      $("fp-text").textContent="（二进制文件："+(f.name.match(/\.pdf$/i)?"PDF":"DOCX")+"，上传后自动解析入库）";
+      preview.textContent = "（二进制文件：" + ext + "，上传后自动解析入库）";
     }
   }
-  function cancelUpload(){ selectedFile=null; $("file-input").value=""; $("file-preview").classList.add("hidden"); $("upload-btn").disabled=true; }
-  async function confirmUpload(){
-    if(!selectedFile) return;
-    $("upload-btn").disabled=true;
-    const fd=new FormData(); fd.append("file",selectedFile);
-    const resp=await fetch(BASE+"/upload",{method:"POST",headers:authHeaders(),body:fd});
-    if(handle401(resp))return;
-    if(resp.ok){ cancelUpload(); loadDocuments(); } else { alert(formatError(await resp.json())); $("upload-btn").disabled=false; }
+
+  function clearFile() {
+    $("file-input").value = "";
+    const pv = $("file-preview");
+    pv.classList.add("hidden"); pv.innerHTML = ""; pv.className = "hidden";
+    $("upload-btn").disabled = true;
+    setHint("upload-hint", "", "info");
   }
-  async function loadDocuments(){
-    const resp=await fetch(BASE+"/documents",{headers:authHeaders()}); if(handle401(resp))return;
-    allDocs=await resp.json(); docPage=1; renderDocuments();
-  }
-  function onDocSearch(){ docPage=1; renderDocuments(); }
-  function renderDocuments(){
-    $("doc-count").textContent="（共 "+allDocs.length+" 个）";
-    const q=$("doc-search").value.trim().toLowerCase();
-    const filtered=q?allDocs.filter(d=>(d.filename||"").toLowerCase().includes(q)):allDocs;
-    const totalPages=Math.max(1,Math.ceil(filtered.length/DOC_PAGE_SIZE));
-    if(docPage>totalPages) docPage=totalPages;
-    const start=(docPage-1)*DOC_PAGE_SIZE;
-    const page=filtered.slice(start,start+DOC_PAGE_SIZE);
-    const el=$("doc-list");
-    if(page.length===0){ el.innerHTML='<div style="font-size:13px;color:var(--text-muted);padding:6px 8px">暂无文档</div>'; }
-    else{
-      el.innerHTML=page.map(d=>
-        '<div class="doc-item"><span class="di-name" title="'+escapeHtml(d.filename)+'">'+escapeHtml(d.filename)+'</span>'+
-        '<span class="di-meta">'+escapeHtml(d.file_type||"")+' · '+(d.chunk_count||0)+'段</span>'+
-        '<button class="icon-btn" title="删除" onclick="deleteDoc(\''+d.document_id+'\')">🗑</button></div>').join("");
+
+  /** 上传：按钮全程 disabled（防重复点击），E2E 依赖"完成后恢复可用"。 */
+  async function startUpload() {
+    if (app.uploading) return;
+    const f = $("file-input").files && $("file-input").files[0];
+    if (!f) return;
+    if (app.role === "viewer") { setHint("upload-hint", "只读账号无法上传，请联系管理员", "err"); return; }
+
+    app.uploading = true;
+    $("upload-btn").disabled = true;
+    $("upload-btn").textContent = "上传并建立索引中…";
+    setHint("upload-hint", "上传中，请勿关闭页面…", "info");
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const data = await apiData("/upload", { method: "POST", body: fd });
+      if (data && data.status === "failed") {
+        setHint("upload-hint", data.message || "入库失败", "err");
+      } else {
+        setHint("upload-hint", "已入库：" + (data.filename || f.name) + "（" + (data.chunk_count || 0) + " 个片段）", "ok");
+      }
+      clearFile();
+      await loadDocuments();
+    } catch (e) {
+      if (e && e.status === 403) setHint("upload-hint", "当前账号无上传权限：" + e.message, "err");
+      else setHint("upload-hint", e && e.message ? e.message : "上传失败", "err");
+    } finally {
+      app.uploading = false;
+      $("upload-btn").textContent = "上传并建立索引";
+      const has = $("file-input").files && $("file-input").files.length > 0;
+      $("upload-btn").disabled = !has;
     }
-    $("doc-pager").innerHTML='<button '+(docPage<=1?"disabled":"")+' onclick="docPage--;renderDocuments()">上一页</button>'+
-      '<span>第 '+docPage+' / '+totalPages+' 页</span>'+
-      '<button '+(docPage>=totalPages?"disabled":"")+' onclick="docPage++;renderDocuments()">下一页</button>';
-  }
-  async function deleteDoc(id){
-    if(!confirm("确定删除该文档？删除后无法恢复。")) return;
-    const resp=await fetch(BASE+"/documents/"+id,{method:"DELETE",headers:authHeaders()});
-    if(resp.ok) loadDocuments(); else alert("删除失败");
   }
 
-  // ===== 评测 =====
-  async function runEval(){
-    $("eval-result").innerHTML='<div style="font-size:13px;color:var(--text-muted)">评测中（真实 LLM，约几十秒）...</div>';
-    const resp=await fetch(BASE+"/evaluation/run",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({test_set_path:"data/evaluation/test_set_smart.json",top_k:3})});
-    if(handle401(resp))return;
-    const data=await resp.json();
-    if(!resp.ok){ $("eval-result").innerHTML='<div class="err">'+formatError(data)+'</div>'; return; }
-    const pct=v=>(v==null?"-":(v*100).toFixed(1)+"%");
-    $("eval-result").innerHTML=
-      '<div class="metric-row"><span>总题数</span><b>'+data.total+'</b></div>'+
-      '<div class="metric-row"><span>关键词命中</span><b>'+pct(data.keyword_accuracy)+'</b></div>'+
-      '<div class="metric-row"><span>来源准确</span><b>'+pct(data.source_accuracy)+'</b></div>'+
-      '<div class="metric-row"><span>拒答正确</span><b>'+pct(data.refusal_accuracy)+'</b></div>'+
-      '<div class="metric-row"><span>综合准确</span><b>'+pct(data.overall_accuracy)+'</b></div>';
-    loadEvalHistory();
-  }
-  async function loadEvalHistory(){
-    const resp=await fetch(BASE+"/evaluation/runs",{headers:authHeaders()}); if(handle401(resp))return;
-    const rows=await resp.json(); const el=$("eval-history");
-    if(!Array.isArray(rows)||rows.length===0){ el.innerHTML=''; return; }
-    const pct=v=>(v==null?"-":(v*100).toFixed(1)+"%");
-    el.innerHTML='<div style="margin-top:12px;font-weight:600;font-size:13px;color:var(--text-secondary)">历史记录</div>'+
-      rows.slice(0,5).map(r=>{
-        const m=r.metrics||{};
-        const t=String(r.created_at||"").replace("T"," ").slice(5,16);
-        return '<div class="eh-item">'+t+' · '+m.total+'题 · 综合 <b>'+pct(m.overall_accuracy)+'</b></div>';
-      }).join("");
+  async function loadDocuments() {
+    const el = $("doc-list");
+    try {
+      const rows = await apiData("/documents");
+      app.docs = Array.isArray(rows) ? rows : [];
+      app.docPage = 1;
+      renderDocuments();
+      if (app.role === "admin" && !$("modal-admin").classList.contains("hidden")) renderAdminDocs();
+    } catch (e) {
+      el.innerHTML = '<div class="hint box err">文档列表加载失败：' + escapeHtml(e.message) + "</div>";
+      $("doc-count").textContent = "";
+    }
   }
 
-  refreshAuthUI();
+  function onDocSearch() { app.docPage = 1; renderDocuments(); }
+
+  function renderDocuments() {
+    const q = $("doc-search").value.trim().toLowerCase();
+    const filtered = q ? app.docs.filter((d) => String(d.filename || "").toLowerCase().includes(q)) : app.docs;
+    $("doc-count").textContent = app.docs.length ? "共 " + app.docs.length + " 篇" : "";
+    const totalPages = Math.max(1, Math.ceil(filtered.length / DOC_PAGE_SIZE));
+    if (app.docPage > totalPages) app.docPage = totalPages;
+    const start = (app.docPage - 1) * DOC_PAGE_SIZE;
+    const page = filtered.slice(start, start + DOC_PAGE_SIZE);
+    const el = $("doc-list");
+
+    if (!filtered.length) {
+      const isAdmin = app.role === "admin";
+      el.innerHTML = app.docs.length
+        ? '<div class="empty"><div class="empty-title">没有匹配的文档</div><div>换个关键词试试</div></div>'
+        : '<div class="empty"><div class="empty-title">还没有文档</div>' +
+          (app.role === "viewer"
+            ? "<div>知识库由管理员维护，可直接提问</div>"
+            : "<div>把制度文件拖到上方选择框，导入第一篇</div>" +
+              (isAdmin ? "" : '<div class="empty-action"><span class="muted">支持 PDF / Word / Markdown / TXT</span></div>')) +
+          "</div>";
+      $("doc-pager").innerHTML = "";
+      return;
+    }
+
+    el.innerHTML = page.map((d) => {
+      const canDelete = app.role === "admin";
+      return '<div class="doc-item" data-doc-id="' + escapeHtml(d.document_id) + '">' +
+        '<span class="di-body"><span class="di-name" title="' + escapeHtml(d.filename) + '">' +
+        escapeHtml(d.filename) + "</span>" +
+        '<span class="di-meta">' + escapeHtml(String(d.file_type || "").toUpperCase()) +
+        " · " + (d.chunk_count || 0) + " 段 · " + formatSize(d.file_size) + "</span></span>" +
+        (canDelete
+          ? '<button class="icon-btn" title="删除文档（不可撤销）" onclick="deleteDoc(\'' + escapeHtml(d.document_id) + '\',\'' +
+            escapeHtml(d.filename).replace(/'/g, "\\'") + '\')">删除</button>'
+          : "") +
+        "</div>";
+    }).join("");
+
+    if (totalPages > 1) {
+      $("doc-pager").innerHTML =
+        '<button class="btn ghost sm"' + (app.docPage <= 1 ? " disabled" : "") + ' onclick="gotoDocPage(' + (app.docPage - 1) + ')">上一页</button>' +
+        "<span>第 " + app.docPage + " / " + totalPages + " 页</span>" +
+        '<button class="btn ghost sm"' + (app.docPage >= totalPages ? " disabled" : "") + ' onclick="gotoDocPage(' + (app.docPage + 1) + ')">下一页</button>';
+    } else {
+      $("doc-pager").innerHTML = "";
+    }
+  }
+
+  function gotoDocPage(p) { app.docPage = p; renderDocuments(); }
+
+  function deleteDoc(id, name) {
+    openConfirm({
+      title: "删除文档",
+      desc: "将删除「" + name + "」及其全部向量索引，删除后不可撤销。",
+      ok: "删除",
+      onConfirm: async () => {
+        await apiData("/documents/" + encodeURIComponent(id), { method: "DELETE" });
+        await loadDocuments();
+      },
+    });
+  }
+
+  /* =========================================================================
+     J. 管理区（仅 admin）
+     ========================================================================= */
+  function openAdmin() {
+    if (app.role !== "admin") { setHint("composer-status", "需要管理员权限", "err"); return; }
+    $("modal-admin").classList.remove("hidden");
+    switchAdminPane("docs");
+    $("admin-eval-path").value = $("eval-path").value;
+  }
+  function closeAdmin() { $("modal-admin").classList.add("hidden"); }
+
+  async function loadAdminDocs() {
+    const el = $("admin-doc-list");
+    el.innerHTML = '<div class="hint info" style="padding:8px 0">载入中…</div>';
+    await loadDocuments();
+    renderAdminDocs();
+  }
+
+  function renderAdminDocs() {
+    const q = ($("admin-doc-search").value || "").trim().toLowerCase();
+    const rows = q ? app.docs.filter((d) => String(d.filename || "").toLowerCase().includes(q)) : app.docs;
+    const el = $("admin-doc-list");
+    if (!rows.length) {
+      el.innerHTML = '<div class="empty"><div class="empty-title">' +
+        (app.docs.length ? "没有匹配的文档" : "知识库中还没有文档") + "</div></div>";
+      return;
+    }
+    el.innerHTML = rows.map((d) =>
+      '<div class="doc-item"><span class="di-body"><span class="di-name">' + escapeHtml(d.filename) + "</span>" +
+      '<span class="di-meta">' + escapeHtml(String(d.file_type || "").toUpperCase()) + " · " + (d.chunk_count || 0) +
+      " 段 · 上传于 " + escapeHtml(formatTime(d.uploaded_at)) + "</span></span>" +
+      '<button class="btn danger-outline sm" onclick="deleteDoc(\'' + escapeHtml(d.document_id) + '\',\'' +
+      escapeHtml(d.filename).replace(/'/g, "\\'") + '\')">删除</button></div>'
+    ).join("");
+  }
+
+  async function loadUsers() {
+    const el = $("admin-user-list");
+    el.innerHTML = '<div class="hint info" style="padding:8px 0">载入中…</div>';
+    try {
+      const rows = await apiData("/admin/users");
+      if (!rows.length) { el.innerHTML = '<div class="empty"><div class="empty-title">还没有用户</div></div>'; return; }
+      el.innerHTML = rows.map((u) =>
+        '<div class="user-row"><span class="badge role ' + escapeHtml(u.role) + '">' +
+        escapeHtml(ROLE_LABEL[u.role] || u.role) + "</span>" +
+        '<span class="u-name">' + escapeHtml(u.username) + "</span>" +
+        '<span class="u-time">' + escapeHtml(formatTime(u.created_at)) + "</span></div>"
+      ).join("");
+    } catch (e) {
+      el.innerHTML = '<div class="hint box err">' + escapeHtml(e.message) + "</div>";
+    }
+  }
+
+  async function createUser() {
+    const username = $("new-user-name").value.trim();
+    const password = $("new-user-pass").value;
+    const role = $("new-user-role").value;
+    if (username.length < 3) { setHint("new-user-hint", "用户名至少 3 位", "err"); return; }
+    if (password.length < 6) { setHint("new-user-hint", "密码至少 6 位", "err"); return; }
+    const btn = $("new-user-btn");
+    btn.disabled = true;
+    setHint("new-user-hint", "创建中…", "info");
+    try {
+      const data = await apiData("/admin/users", {
+        method: "POST",
+        body: JSON.stringify({ username: username, password: password, role: role, tenant: app.tenant }),
+      });
+      setHint("new-user-hint", "已创建：" + data.username + "（" + (ROLE_LABEL[data.role] || data.role) + "）", "ok");
+      $("new-user-name").value = ""; $("new-user-pass").value = "";
+      loadUsers();
+    } catch (e) {
+      setHint("new-user-hint", e.message || "创建失败", "err");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /* =========================================================================
+     K. 评测（仅 admin）
+     ========================================================================= */
+  async function runEval() {
+    if (app.role !== "admin") { setHint("composer-status", "只有管理员可以运行评测", "err"); return; }
+    const path = ($("admin-eval-path").value || "").trim();
+    const targets = [$("eval-result"), $("admin-eval-result")].filter(Boolean);
+    const btn = $("eval-run-btn"), abtn = $("admin-eval-btn");
+    if (btn) btn.disabled = true;
+    if (abtn) abtn.disabled = true;
+    const loading = '<div class="hint info">评测中，会真实调用 LLM（约几十秒）…</div>';
+    targets.forEach((t) => { t.innerHTML = loading; });
+    try {
+      const data = await apiData("/evaluation/run", {
+        method: "POST",
+        body: JSON.stringify({ test_set_path: path || null, top_k: DEFAULT_TOP_K }),
+      });
+      const pct = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
+      const html =
+        '<div class="metric-row"><span>总题数</span><b>' + (data.total ?? "—") + "</b></div>" +
+        '<div class="metric-row"><span>关键词命中</span><b>' + pct(data.keyword_accuracy) + "</b></div>" +
+        '<div class="metric-row"><span>来源准确</span><b>' + pct(data.source_accuracy) + "</b></div>" +
+        '<div class="metric-row"><span>拒答正确</span><b>' + pct(data.refusal_accuracy) + "</b></div>" +
+        '<div class="metric-row"><span>综合准确</span><b>' + pct(data.overall_accuracy) + "</b></div>";
+      targets.forEach((t) => { t.innerHTML = html; });
+      loadEvalHistory();
+    } catch (e) {
+      targets.forEach((t) => { t.innerHTML = '<div class="hint err">' + escapeHtml(e.message) + "</div>"; });
+    } finally {
+      if (btn) btn.disabled = false;
+      if (abtn) abtn.disabled = false;
+    }
+  }
+
+  async function loadEvalHistory() {
+    if (app.role !== "admin") return;
+    try {
+      const rows = await apiData("/evaluation/runs");
+      const pct = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
+      const recent = (rows || []).slice(0, 8);
+      const html = recent.length
+        ? '<div class="run-item" style="color:var(--text-3)">最近 ' + recent.length + " 次</div>" +
+          recent.map((r) => {
+            const m = r.metrics || {};
+            return '<div class="run-item"><span class="run-time">' + escapeHtml(formatTime(r.created_at)) + "</span> · " +
+              (m.total ?? "—") + " 题 · 综合 <b>" + pct(m.overall_accuracy) + "</b></div>";
+          }).join("")
+        : '<div class="hint info" style="margin-top:8px">还没有评测记录</div>';
+      ["eval-history", "admin-eval-history"].forEach((id) => { if ($(id)) $(id).innerHTML = html; });
+    } catch (e) {
+      ["eval-history", "admin-eval-history"].forEach((id) => {
+        if ($(id)) $(id).innerHTML = '<div class="hint err">' + escapeHtml(e.message) + "</div>";
+      });
+    }
+  }
+
+  /* =========================================================================
+     L. 弹层：通用重命名 / 确认（都支持 Esc 关闭、Enter 确认）
+     ========================================================================= */
+  let promptOkHandler = null;
+  let confirmOkHandler = null;
+
+  function openPrompt(cfg) {
+    $("prompt-title").textContent = cfg.title;
+    $("prompt-label").textContent = cfg.label || "新名称";
+    $("prompt-input").value = cfg.value || "";
+    $("prompt-ok").textContent = cfg.ok || "保存";
+    const desc = $("prompt-desc");
+    desc.classList.toggle("hidden", !cfg.desc);
+    desc.textContent = cfg.desc || "";
+    setHint("prompt-msg", "", "info");
+    $("modal-prompt").classList.remove("hidden");
+    const input = $("prompt-input");
+    setTimeout(() => { input.focus(); input.select(); }, 30);
+    promptOkHandler = async () => {
+      const value = $("prompt-input").value.trim();
+      if (!value) { setHint("prompt-msg", "不能为空", "err"); return; }
+      if (cfg.maxLength && value.length > cfg.maxLength) { setHint("prompt-msg", "内容过长", "err"); return; }
+      const btn = $("prompt-ok");
+      btn.disabled = true;
+      try {
+        await cfg.onSubmit(value);
+        closePrompt();
+      } catch (e) {
+        setHint("prompt-msg", e.message || "操作失败", "err");
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    $("prompt-ok").onclick = () => promptOkHandler && promptOkHandler();
+    $("prompt-input").onkeydown = (e) => {
+      if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); promptOkHandler && promptOkHandler(); }
+    };
+  }
+  function closePrompt() { $("modal-prompt").classList.add("hidden"); promptOkHandler = null; }
+
+  function openConfirm(cfg) {
+    $("confirm-title").textContent = cfg.title;
+    $("confirm-desc").textContent = cfg.desc || "";
+    $("confirm-ok").textContent = cfg.ok || "确认";
+    setHint("confirm-msg", "", "info");
+    $("modal-confirm").classList.remove("hidden");
+    setTimeout(() => $("confirm-ok").focus(), 30);
+    confirmOkHandler = async () => {
+      const btn = $("confirm-ok");
+      btn.disabled = true;
+      try {
+        await cfg.onConfirm();
+        closeConfirm();
+      } catch (e) {
+        setHint("confirm-msg", e.message || "操作失败", "err");
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    $("confirm-ok").onclick = () => confirmOkHandler && confirmOkHandler();
+  }
+  function closeConfirm() { $("modal-confirm").classList.add("hidden"); confirmOkHandler = null; }
+
+  function closeTopLayer() {
+    if (!$("modal-confirm").classList.contains("hidden")) { closeConfirm(); return true; }
+    if (!$("modal-prompt").classList.contains("hidden")) { closePrompt(); return true; }
+    if (!$("modal-admin").classList.contains("hidden")) { closeAdmin(); return true; }
+    return false;
+  }
+
+  /* =========================================================================
+     M. 事件绑定与启动
+     ========================================================================= */
+  function bindEvents() {
+    const ta = $("question");
+    ta.addEventListener("input", autoGrow);
+    // Enter 发送、Shift+Enter 换行；中文输入法组字中的 Enter 不算发送
+    ta.addEventListener("keydown", onComposerKey);
+
+    $("login-username").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+    $("login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+    $("login-tenant").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+
+    $("file-input").addEventListener("change", onFileSelected);
+
+    const dz = $("dropzone");
+    dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("dragging"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("dragging"));
+    dz.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dz.classList.remove("dragging");
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (files && files.length) {
+        // 用 DataTransfer 把拖入的文件写回原生 input，后续逻辑只认 input.files
+        const dt = new DataTransfer();
+        dt.items.add(files[0]);
+        $("file-input").files = dt.files;
+        onFileSelected();
+      }
+    });
+
+    // 用户往上滚时不要抢滚动条：滚回底部才继续自动跟随，并把"回到最新"提示收起
+    $("messages").addEventListener("scroll", () => {
+      if (nearBottom()) hideJump();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      const closed = closeTopLayer();
+      if (!closed && NARROW.matches && $("app").dataset.tab !== "chat") switchTab("chat");
+    });
+
+    NARROW.addEventListener("change", () => { if (!NARROW.matches) switchTab("chat"); });
+  }
+
+  /** 启动：先恢复登录态，再按需探测流式开关。 */
+  function boot() {
+    bindEvents();
+    const jump = document.createElement("button");
+    jump.id = "jump-bottom";
+    jump.className = "jump-bottom btn ghost sm hidden";
+    jump.textContent = "回到最新 ↓";
+    jump.onclick = () => scrollToBottom(true);
+    document.querySelector(".chat").style.position = "relative";
+    document.querySelector(".chat").appendChild(jump);
+
+    if (app.token) refreshAuthUI();
+    else { renderIdentity(); $("login-panel").classList.remove("hidden"); $("app").classList.add("hidden"); }
+  }
+
+  boot();
   </script>
 </body>
 </html>

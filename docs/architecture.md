@@ -132,7 +132,14 @@ V2 在保持 V1 分层不变的前提下，向外扩了三类能力：**多入�
 | --- | --- |
 | 多租户 | `tenant_id` 落在用户/文档/会话/评测 + **向量 chunk 的 metadata**，检索时 `where={"tenant_id": …}` 过滤（最易漏的一环） |
 | RBAC | `viewer` / `user` / `admin` 三角色，`require_role()` 依赖统一拦截 |
+| 租户准入 | **邀请码**（`invites` 表）：`REQUIRE_INVITE=true` 时注册必须持码，**租户与角色由码决定**，请求里的 `tenant` 被忽略；额度扣减是带条件的单条 `UPDATE`（并发不超发）。bootstrap 例外收窄为「`DEFAULT_TENANT` + 该租户尚无管理员」 |
 | 检索阈值 | `MIN_SCORE`（0 = 关闭，保持 V1 行为）；过滤发生在 `VectorStore.query` |
 | 限流后端 | `memory`（默认）/ `redis`（跨副本共享，不可用自动回退） |
-| 结构演进 | Alembic 迁移（`migrations/`），存量库先 `stamp 0001_initial` 再升级 |
-| 流式输出 | `POST /ask/stream`（SSE：`meta → delta* → sources → done`，异常发 `error` 不断流） |
+| 结构演进 | Alembic 迁移（`migrations/`，当前 `0003_invites`），存量库先 `stamp 0001_initial` 再升级；新表同时进 `SCHEMA`（运行时自举）与迁移，故迁移脚本对"表已存在"要**幂等** |
+| 流式输出 | `POST /ask/stream`（SSE：`meta → delta* → sources → done`，异常发 `error` 不断流）。两个实现要点：客户端必须**边收边吐**（否则首字延迟 == 总耗时），且同步生成器要用 `iterate_in_threadpool` 迭代（否则阻塞事件循环、整个服务卡住） |
+
+> 三个"看起来能跑、真机才炸"的点（都在真机验收里被抓住，见 `docs/testing.md` §11）：
+> ① `httpx.post(..., stream=True)` 是无效用法；
+> ② 流式读完才 yield 让首字延迟等于总耗时；
+> ③ 在事件循环里同步迭代生成器会卡死服务。
+> 共同教训：**假库/桩组件通过 ≠ 真机通过**，网络与并发路径必须单独验收。

@@ -12,6 +12,7 @@ Chroma 的 `where` 用法不对、唯一键没改，这些**只有真机才暴�
 | `upgrade` | **真实库**：先逻辑备份 → `stamp 0001_initial` → `upgrade head` → 校验列/索引/唯一键/外键/存量数据 |
 | `chroma` | 真实 Chroma 双租户隔离（含"老数据缺 tenant_id 字段"的已知偏差演示） |
 | `api` | 临时库 + 真实 Chroma 上跑一遍角色矩阵与跨租户隔离（走真实 HTTP） |
+| `invites` | 真实库上验证邀请码准入：bootstrap 免码、body 的 tenant 被忽略、一次性码、跨租户 404 |
 
 用法::
 
@@ -81,6 +82,13 @@ def alembic_config(database: str | None = None) -> Config:
     if database is not None:
         cfg.cmd_opts = argparse.Namespace(x=[f"db_url={db_url(database)}"])
     return cfg
+
+
+def head_revision() -> str:
+    """当前迁移链的 head（**不要硬编码版本号**：加一版迁移这里就会失效）。"""
+    from alembic.script import ScriptDirectory
+
+    return ScriptDirectory.from_config(alembic_config()).get_heads()[0]
 
 
 def recreate_database(conn, name: str) -> None:
@@ -206,7 +214,7 @@ def verify_migrated_schema(conn, db: str, label: str, expect_users_default_tenan
 # ---------------- 各 part ----------------
 
 def part_temp_db() -> None:
-    print("\n=== [1/4] 临时库：0001 → 0002 → base 往返 ===")
+    print("\n=== [1/5] 临时库：0001 → head → base 往返 ===")
     temp_db = f"{settings.mysql_db}_v2verify"
     conn = server_conn()
     try:
@@ -252,7 +260,7 @@ def _dump_real_db(conn, db: str) -> Path:
 
 def part_upgrade() -> None:
     db = settings.mysql_db
-    print(f"\n=== [2/4] 真实库 {db}：备份 → stamp → upgrade → 校验 ===")
+    print(f"\n=== [2/5] 真实库 {db}：备份 → stamp → upgrade → 校验 ===")
     conn = server_conn(db)
     try:
         backup = _dump_real_db(conn, db)
@@ -262,23 +270,27 @@ def part_upgrade() -> None:
         print(f"  升级前行数：{before}")
         had_alembic = table_exists(conn, db, "alembic_version")
         had_tenant = "tenant_id" in columns(conn, db, "users")
+        head = head_revision()
+        print(f"  迁移链 head：{head}")
 
         if had_alembic:
             current = _current_revision(conn, db)
             print(f"  库里已有 alembic_version，当前版本：{current}")
-            if current != "0002_multi_tenant":
+            if current != head:
                 command.upgrade(alembic_config(), "head")
         elif had_tenant:
             # 极端情况：列已经手工加过（或从别处拷来的库），但没有版本表。
             # 此时**绝不能**从 0001 再 upgrade —— 0002 会重复 ADD COLUMN 而报错。
             print("  已有 tenant_id 但缺 alembic_version：按「0002 已应用」处理，直接 stamp")
             command.stamp(alembic_config(), "0002_multi_tenant")
+            command.upgrade(alembic_config(), "head")
         else:
             print("  库里没有 alembic_version：先 stamp 到 0001_initial（标记「已有 V1 表结构」），再 upgrade")
             command.stamp(alembic_config(), "0001_initial")
             command.upgrade(alembic_config(), "head")
 
-        check("真实库：版本已到 0002_multi_tenant", _current_revision(conn, db) == "0002_multi_tenant")
+        check(f"真实库：版本已到 head（{head}）", _current_revision(conn, db) == head,
+              str(_current_revision(conn, db)))
         verify_migrated_schema(conn, db, "真实库")
 
         after = row_counts(conn, db)
@@ -302,7 +314,7 @@ def _current_revision(conn, db: str) -> str | None:
 
 
 def part_chroma() -> None:
-    print("\n=== [3/4] 真实 Chroma：双租户隔离 ===")
+    print("\n=== [3/5] 真实 Chroma：双租户隔离 ===")
     import shutil
     import tempfile as _tempfile
 
@@ -352,7 +364,7 @@ def part_chroma() -> None:
 
 
 def part_api() -> None:
-    print("\n=== [4/4] 真实 MySQL + 真实 Chroma：角色矩阵与跨租户隔离（HTTP） ===")
+    print("\n=== [4/5] 真实 MySQL + 真实 Chroma：角色矩阵与跨租户隔离（HTTP） ===")
     from fastapi.testclient import TestClient
 
     from app.factory import create_app
@@ -360,6 +372,7 @@ def part_api() -> None:
     temp_db = f"{settings.mysql_db}_v2api"
     conn = server_conn()
     chroma_dir = tempfile.mkdtemp(prefix="v2-verify-chroma-")
+    docs_dir = tempfile.mkdtemp(prefix="v2-verify-docs-")
     try:
         recreate_database(conn, temp_db)
         command.upgrade(alembic_config(temp_db), "head")
@@ -367,6 +380,9 @@ def part_api() -> None:
         cfg = dataclasses.replace(
             settings,
             mysql_db=temp_db,
+            # 上传目录也必须指向临时目录：验收脚本**绝不能往真实 data/documents/ 里写文件**
+            # （踩过：`/upload` 与 ingest 都会把文件落到 documents_dir，结果真目录里堆了测试文件）
+            documents_dir=docs_dir,
             llm_provider="fake",
             embedding_provider="hash",
             vector_store="chroma",
@@ -444,6 +460,127 @@ def part_api() -> None:
         check("HTTP：admin 用户列表只含本租户",
               {r["tenant_id"] for r in client.get("/admin/users", headers=admin_h).json()} == {"default"})
     finally:
+        # 临时目录清理失败不该让验收失败（Windows 上 Chroma 的 sqlite 句柄可能未释放）
+        import shutil as _shutil
+
+        _shutil.rmtree(chroma_dir, ignore_errors=True)
+        _shutil.rmtree(docs_dir, ignore_errors=True)
+        drop_database(conn, temp_db)
+        conn.close()
+
+
+def part_invites() -> None:
+    """邀请码准入的真机验证：租户与角色必须**由邀请码决定**，body 里的 tenant 必须被忽略。"""
+    print("\n=== [5/5] 真实库：邀请码准入 ===")
+    from fastapi.testclient import TestClient
+
+    from app.factory import create_app
+
+    temp_db = f"{settings.mysql_db}_v2invite"
+    conn = server_conn()
+    docs_dir = tempfile.mkdtemp(prefix="v2-verify-docs-")
+    try:
+        recreate_database(conn, temp_db)
+        command.upgrade(alembic_config(temp_db), "head")
+
+        cfg = dataclasses.replace(
+            settings,
+            mysql_db=temp_db,
+            documents_dir=docs_dir,  # 同上：不要往真实 data/documents/ 写
+            llm_provider="fake",
+            embedding_provider="hash",
+            vector_store="memory",
+            enable_rerank=False,
+            rate_limit_backend="memory",
+            auth_rate_limit_per_minute=10000,
+            bootstrap_admin_username="root",
+            require_invite=True,
+            invite_default_max_uses=1,
+        )
+        client = TestClient(create_app(cfg))
+        PWD = "test123456"
+
+        # 鸡生蛋：开启邀请码后，bootstrap 管理员必须仍能注册进来，否则新库一个人都进不去
+        root = client.post("/auth/register", json={"username": "root", "password": PWD})
+        check("邀请码：bootstrap 管理员免码注册成功且是 admin",
+              root.status_code == 200 and root.json()["role"] == "admin", root.text)
+        admin_h = {"Authorization": f"Bearer {root.json()['token']}"}
+
+        plain = client.post("/auth/register", json={"username": "plain", "password": PWD})
+        check("邀请码：普通用户不带码注册被拒 403", plain.status_code == 403, plain.text)
+
+        bad = client.post("/auth/register",
+                          json={"username": "plain", "password": PWD, "invite_code": "nope"})
+        check("邀请码：无效码注册被拒 403", bad.status_code == 403, bad.text)
+
+        # ---- 越权回归（真机验证发现并修掉的洞）----
+        # 收窄前：任何人用 {"username":"root","tenant":"victim"} 就能免码成为该租户 admin，
+        # 若目标租户已存在且无同名账号，等于跨租户越权。
+        takeover = client.post("/auth/register",
+                               json={"username": "root", "password": PWD, "tenant": "victim-corp"})
+        check("邀请码：bootstrap 账号**不能**在其它租户免码注册（越权洞已堵）",
+              takeover.status_code == 403, f"{takeover.status_code} {takeover.text}")
+
+        # 平台租户（DEFAULT_TENANT）的管理员可以为别的租户签发 —— 这是新租户唯一的开通途径
+        made = client.post("/admin/invites",
+                           json={"role": "viewer", "max_uses": 1, "tenant": "tenant-b"},
+                           headers=admin_h)
+        check("邀请码：平台租户 admin 可为其它租户签码（否则新租户无法开通）",
+              made.status_code == 200, made.text)
+        code = made.json()["code"]
+        check("邀请码：签发的码归属 tenant-b 且角色为 viewer",
+              made.json()["tenant_id"] == "tenant-b" and made.json()["role"] == "viewer",
+              str(made.json()))
+
+        # 关键：body 里塞 default，实际必须落在 tenant-b（租户由码决定）
+        joined = client.post("/auth/register", json={
+            "username": "newbie", "password": PWD, "invite_code": code, "tenant": "default",
+        })
+        check("邀请码：用码注册成功", joined.status_code == 200, joined.text)
+        check("邀请码：**body 里的 tenant 被忽略**，落在码指定的 tenant-b",
+              joined.json()["tenant_id"] == "tenant-b", str(joined.json()))
+        check("邀请码：角色也由码决定（viewer）", joined.json()["role"] == "viewer", str(joined.json()))
+
+        # tenant-b 自己的管理员：由平台管理员签发一个 admin 码邀请他
+        made_admin = client.post("/admin/invites",
+                                json={"role": "admin", "tenant": "tenant-b"}, headers=admin_h)
+        root_b = client.post("/auth/register", json={
+            "username": "root", "password": PWD, "invite_code": made_admin.json()["code"],
+        })
+        check("邀请码：为新租户邀请出第一个管理员", root_b.status_code == 200
+              and root_b.json()["role"] == "admin", root_b.text)
+        admin_b_h = {"Authorization": f"Bearer {root_b.json()['token']}"}
+
+        # 非平台租户的管理员仍然不能跨租户签发
+        cross = client.post("/admin/invites",
+                            json={"role": "viewer", "tenant": "default"}, headers=admin_b_h)
+        check("邀请码：非平台租户 admin 不能给别的租户签码（403）",
+              cross.status_code == 403, cross.text)
+
+        reuse = client.post("/auth/register",
+                            json={"username": "second", "password": PWD, "invite_code": code})
+        check("邀请码：一次性码第二次使用被拒 403", reuse.status_code == 403, reuse.text)
+
+        # 跨租户删除按 404 处理（不泄漏"这个码存在但你无权"）。
+        # 方向很重要：这个码属于 tenant-b，所以**默认租户**的 admin 去删才是跨租户操作。
+        gone = client.delete(f"/admin/invites/{code}", headers=admin_h)
+        check("邀请码：跨租户删除返回 404", gone.status_code == 404, str(gone.status_code))
+
+        own = client.get("/admin/invites", headers=admin_b_h).json()
+        check("邀请码：列表只含本租户的码，且两个租户的码互不可见",
+              all(r["tenant_id"] == "tenant-b" for r in own)
+              and {r["code"] for r in own} == {code, made_admin.json()["code"]},
+              str(own))
+        default_codes = {r["code"] for r in client.get("/admin/invites", headers=admin_h).json()}
+        check("邀请码：默认租户的列表里看不到 tenant-b 的码",
+              not (default_codes & {code, made_admin.json()["code"]}), str(default_codes))
+
+        removed = client.delete(f"/admin/invites/{code}", headers=admin_b_h)
+        check("邀请码：本租户 admin 可删除自己的码", removed.status_code == 200, removed.text)
+    finally:
+        import shutil as _shutil
+
+        _shutil.rmtree(docs_dir, ignore_errors=True)
         drop_database(conn, temp_db)
         conn.close()
 
@@ -453,6 +590,7 @@ PARTS = {
     "upgrade": part_upgrade,
     "chroma": part_chroma,
     "api": part_api,
+    "invites": part_invites,
 }
 
 

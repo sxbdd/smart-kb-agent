@@ -58,6 +58,9 @@ def build_container(cfg: Settings | None = None) -> SimpleNamespace:
         default_tenant=cfg.default_tenant,
         allow_self_register=cfg.allow_self_register,
         bootstrap_admin_username=cfg.bootstrap_admin_username,
+        require_invite=cfg.require_invite,
+        invite_ttl_hours=cfg.invite_ttl_hours,
+        invite_default_max_uses=cfg.invite_default_max_uses,
     )
     # 限流后端按配置选择：redis 优先，建连失败自动回退进程内实现
     auth_limiter = build_limiter(

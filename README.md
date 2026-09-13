@@ -18,27 +18,35 @@ FastAPI · RAG · Chroma · sentence-transformers(bge-small-zh) · Agent(ReAct) 
 
 ## 功能特性
 
-- **文档管理**：PDF / Markdown / TXT / DOCX 上传，自动解析、切分、向量化入库
+- **文档管理**：PDF / Markdown / TXT / DOCX / **Excel / CSV / 图片 / 扫描件 PDF** 上传，自动解析、切分、向量化入库
+  （OCR 插件化，缺可选依赖时优雅降级并给出清晰报错）
 - **智能问答**：Router 自动分发 Chat / RAG / Agent，回答带引用来源
+- **流式输出**：`POST /ask/stream`（SSE，`meta → delta* → sources → done`），前端逐段渲染；关闭时自动回退非流式
 - **诚实拒答**：知识库无依据时明确拒答，不编造
 - **Agent**：ReAct 循环 + 工具调用（knowledge_search / calculator）
 - **多轮对话**：chat / rag / agent 统一接入历史上下文
+- **多租户隔离**：DAO 全量带 `tenant_id` + 向量库按 metadata 过滤，跨租户检索不到
+- **RBAC**：`viewer` / `user` / `admin` 三角色，删文档 / 跑评测 / 用户管理仅 admin
+- **邀请码准入**：`REQUIRE_INVITE=true` 时注册必须持码，且**租户与角色由邀请码决定**
 - **评测**：关键词命中率 / 来源准确率 / 拒答正确率 / 综合准确率 + 历史可视化
-- **认证**：JWT + PBKDF2，业务接口 Bearer 鉴权
+- **MCP server**：把知识库暴露给支持 MCP 的客户端（stdio）
+- **认证**：JWT + PBKDF2，业务接口 Bearer 鉴权；登录接口限流（支持 Redis 共享存储）
 
 ## 状态
 
-**V1 完成（P0 + P1），并已完成 V1.1 审计整改与收尾验证。**
+**V2 完成**（V1 + 10 项 V2 backlog），全部带实测证据。
 
-- 修复 **20 项缺陷**（含跑基线时发现的 P0：`LLM_MAX_TOKENS=1024` 被推理模型思考吃光导致全线失败）；
-- 测试从 6 个脚本升级为 **13 个模块 / 152 个用例 + CI**（Python 3.10/3.12）+ `pip-audit` 依赖扫描；
-- 语料从被测试污染重建为 **6 个文档（含 2 个近邻干扰）/ 13 chunk**，评测集 **5 → 47 题**；
-- **评测基线**（连跑 2 次）：关键词 / 来源 / 拒答 / 综合 **均 100%，极差 0.0pp**；
-- **Rerank A/B**：Recall@3 两组均 100%，首命中 +2.6pp 但延迟 133× → **维持关闭**（ADR-011 已更新为实测结论）；
-- 检索性能：串行 8.3ms / 120.7 QPS，4 并发后吞吐见顶。
+- 测试：**24 个模块 / 459 个用例**（449 passed / 10 skipped），含前端真实浏览器 E2E；
+- **真机验收脚本两个**：`scripts/verify_tenancy.py`（5 部分 **81 项断言**）、
+  `scripts/verify_streaming.py`（真实 DeepSeek，**17 项断言**）；
+- 存量库已升级到 `0003_invites`（Alembic），**数据零丢失**；
+- 评测基线复跑：47 题 × 2 次，四项指标 **100%，极差 0.0pp**；
+- **真机流式抓出并修掉 3 个 P0**（`httpx.post(stream=True)` 无效导致真实流式 100% 失败、
+  "读完才吐"导致首字延迟 == 总耗时、事件循环被同步迭代阻塞）——见 [docs/testing.md](docs/testing.md) §11；
+- **Rerank A/B（190 chunk 大语料）**：R@1 零增益、延迟 85× → **维持关闭**（ADR-011）。
 
-详见 [docs/review-v1-audit.md](docs/review-v1-audit.md)、[docs/change-log.md](docs/change-log.md)、
-[docs/testing.md](docs/testing.md) §11（基线原始数据与复现命令）。
+详见 [docs/v2-plan.md](docs/v2-plan.md)、[docs/change-log.md](docs/change-log.md)、
+[docs/testing.md](docs/testing.md) §11（原始数据与复现命令）。
 
 ## 快速开始
 
@@ -59,12 +67,26 @@ start.bat
 ## 常用脚本
 
 ```powershell
-# 离线测试（约 3 秒，不需要 MySQL / 模型 / 外网）
-.venv\Scripts\python -m pytest
+# 离线测试（约 20 秒，不需要 MySQL / 模型 / 外网）
+# 注意：-o addopts="" 是为了让汇总行显示出来（ini 里的 -q 叠加命令行的 -q 会变成 -qq）
+.venv\Scripts\python -m pytest -o addopts=""
+
+# 前端真实浏览器 E2E（Playwright + 系统 Edge；默认跳过）
+$env:RUN_E2E=1; .venv\Scripts\python -m pytest -o addopts="" tests\test_frontend_e2e.py -v; $env:RUN_E2E=$null
+
+# 真机验收：多租户 / 迁移 / Chroma 隔离 / 角色矩阵 / 邀请码（零费用）
+.venv\Scripts\python scripts\verify_tenancy.py --part all
+
+# 真机验收：真实流式 SSE（**会调用 LLM，消耗 token**）
+.venv\Scripts\python scripts\verify_streaming.py
 
 # 重建知识库（清空污染语料，从 data/kb/ 灌入标准语料；自动备份）
 .venv\Scripts\python scripts\rebuild_kb.py --dry-run
 .venv\Scripts\python scripts\rebuild_kb.py
+
+# 清理 Chroma 孤立 HNSW 段目录（反复重建索引后会堆积；需停服执行）
+.venv\Scripts\python scripts\cleanup_chroma.py            # dry-run
+.venv\Scripts\python scripts\cleanup_chroma.py --apply --keep-count 13
 
 # 真实环境端到端（会真实调用 LLM API 并写入 MySQL）
 $env:RUN_INTEGRATION=1; .venv\Scripts\python -m pytest tests\test_integration_real.py -v -s

@@ -54,6 +54,9 @@ class AuthService:
         default_tenant: str = "default",
         allow_self_register: bool = True,
         bootstrap_admin_username: str = "",
+        require_invite: bool = False,
+        invite_ttl_hours: int = 0,
+        invite_default_max_uses: int = 1,
     ) -> None:
         self.db = db
         self.jwt_secret = jwt_secret
@@ -61,19 +64,88 @@ class AuthService:
         self.default_tenant = normalize_tenant(default_tenant)
         self.allow_self_register = allow_self_register
         self.bootstrap_admin_username = (bootstrap_admin_username or "").strip()
+        self.require_invite = require_invite
+        self.invite_ttl_hours = max(0, int(invite_ttl_hours))
+        self.invite_default_max_uses = max(0, int(invite_default_max_uses))
 
     # ---------------- 注册 / 登录 ----------------
 
-    def register(self, username: str, password: str, tenant: str | None = None) -> dict:
-        """自助注册。``ALLOW_SELF_REGISTER=false`` 时直接 403（改由 admin 代建）。"""
+    def register(
+        self,
+        username: str,
+        password: str,
+        tenant: str | None = None,
+        invite_code: str | None = None,
+    ) -> dict:
+        """自助注册。
+
+        - `ALLOW_SELF_REGISTER=false` → 403（改由 admin 代建）；
+        - `REQUIRE_INVITE=true` → 必须持有效邀请码，且**租户与角色由邀请码决定**，
+          请求里的 `tenant` 一律忽略 —— 否则注册者能自选租户，隔离强制点就失去了前提；
+        - **例外**：`BOOTSTRAP_ADMIN_USERNAME` 指定的账号不需要邀请码，但**只在默认租户里、
+          且该租户还没有管理员时**才生效。没有这个例外就有鸡生蛋问题（开启邀请码后新库
+          一个人都进不来）；但例外必须收窄 —— 否则任何知道这个用户名的人都能用
+          `{"username":"root","tenant":"某个已存在的租户"}` 免码把自己变成那个租户的 admin，
+          直接绕过邀请码闸门读别人的数据（这是真机踩到的越权洞）。
+        """
         if not self.allow_self_register:
             raise AppError("自助注册已关闭，请联系管理员开通账号", 403)
-        tenant_id = normalize_tenant(tenant, self.default_tenant)
+
+        is_bootstrap_admin = self._is_bootstrap_registration(username, tenant)
+        if self.require_invite and not is_bootstrap_admin:
+            invite = self._peek_invite(invite_code)
+            tenant_id = normalize_tenant(invite.get("tenant_id"), self.default_tenant)
+            role = normalize_role(invite.get("role"))
+        else:
+            tenant_id = normalize_tenant(tenant, self.default_tenant)
+            role = self._initial_role(username)
+
+        # 先查重名（拿到租户才知道该查哪个租户），再去原子扣减邀请码 ——
+        # 这样"用户名已存在"不会白白消耗掉一次邀请码额度。
         if self.db.get_user_by_username(username, tenant_id) is not None:
             raise AppError("用户名已存在", 409)
-        role = self._initial_role(username)
+
+        if self.require_invite and not is_bootstrap_admin:
+            # 真正的闸门：带条件的 UPDATE，过期/用尽/不存在都会让 rowcount != 1。
+            # 上面那次 peek 只用来拿租户与角色、把报错说清楚，**不作为放行依据**。
+            consumed = self.db.consume_invite(invite_code.strip(), tenant_id)
+            if consumed is None:
+                raise AppError("邀请码无效、已用尽或已过期", 403)
+
         user_id = self.db.create_user(username, hash_password(password), tenant_id, role)
         return self._auth_payload(user_id, username, tenant_id, role)
+
+    def _is_bootstrap_registration(self, username: str, tenant: str | None) -> bool:
+        """bootstrap 例外的**收窄**判定：`默认租户` + `该租户还没有管理员`。
+
+        为什么必须收窄（两个都是真机验证出来的洞）：
+
+        1. **不限租户** → 任何知道 `BOOTSTRAP_ADMIN_USERNAME` 的人都能发
+           `{"username":"root","tenant":"别的租户"}`，免码成为那个租户的 admin，
+           等于绕过邀请码闸门去读别人租户的数据；
+        2. **不检查"是否已有管理员"** → 一个**已存在**的租户只要当前没有 admin
+           （存量库升级后就是这样），就能被后来者抢注。
+        """
+        if not self.bootstrap_admin_username or username != self.bootstrap_admin_username:
+            return False
+        if normalize_tenant(tenant, self.default_tenant) != self.default_tenant:
+            return False
+        # 用 list_users 而不是新加 DAO 方法：租户内用户数是个位数量级，
+        # 而多一个 DAO 方法就多一份必须在 FakeDatabase 里同步维护的契约。
+        return not any(
+            normalize_role(u.get("role")) == ROLE_ADMIN
+            for u in self.db.list_users(self.default_tenant)
+        )
+
+    def _peek_invite(self, invite_code: str | None) -> dict:
+        """只读地取出邀请码对应的租户与角色（不扣减额度）。"""
+        code = (invite_code or "").strip()
+        if not code:
+            raise AppError("注册需要邀请码，请向管理员索取", 403)
+        invite = self.db.get_invite_by_code(code)
+        if invite is None:
+            raise AppError("邀请码无效", 403)
+        return invite
 
     def login(self, username: str, password: str, tenant: str | None = None) -> dict:
         tenant_id = normalize_tenant(tenant, self.default_tenant)
@@ -83,6 +155,46 @@ class AuthService:
             raise AppError("用户名或密码错误", 401)
         role = normalize_role(user.get("role"))
         return self._auth_payload(user["id"], username, tenant_id, role)
+
+    # ---------------- 邀请码（admin 签发）----------------
+
+    def create_invite(
+        self,
+        tenant_id: str,
+        role: str = DEFAULT_ROLE,
+        max_uses: int | None = None,
+        expires_in_hours: int | None = None,
+        created_by: int | None = None,
+    ) -> dict:
+        """签发一个邀请码并返回它的全部信息（`code` 只在此时可见，之后列表里也仍是它）。"""
+        tenant_id = normalize_tenant(tenant_id, self.default_tenant)
+        uses = self.invite_default_max_uses if max_uses is None else max(0, int(max_uses))
+        ttl = self.invite_ttl_hours if expires_in_hours is None else max(0, int(expires_in_hours))
+        code = secrets.token_hex(8)  # 16 位十六进制：够用（64bit）且便于人工输入
+        self.db.create_invite(
+            code=code,
+            tenant_id=tenant_id,
+            role=normalize_role(role),
+            created_by=created_by,
+            max_uses=uses,
+            expires_in_hours=ttl,
+        )
+        row = self.db.get_invite(code, tenant_id) or {}
+        return self._invite_payload(row, code=code, tenant_id=tenant_id, role=normalize_role(role),
+                                    max_uses=uses)
+
+    @staticmethod
+    def _invite_payload(row: dict, code: str, tenant_id: str, role: str, max_uses: int) -> dict:
+        expires = row.get("expires_at")
+        return {
+            "code": code,
+            "tenant_id": tenant_id,
+            "role": role,
+            "max_uses": int(row.get("max_uses", max_uses) or 0),
+            "used_count": int(row.get("used_count", 0) or 0),
+            "expires_at": None if expires is None else str(expires),
+            "created_at": None if row.get("created_at") is None else str(row.get("created_at")),
+        }
 
     def create_user(
         self,

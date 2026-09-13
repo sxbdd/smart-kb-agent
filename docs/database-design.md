@@ -139,7 +139,42 @@ evaluation_runs（独立）
 1. `0001_initial`：**全新建库**用，建表与 `SCHEMA` 完全一致（含外键与索引）；
 2. `0002_multi_tenant`：**存量升级**用，执行 §7.1/§7.2 的全部 ALTER；
    所有新增列都带 `DEFAULT`，因此**现有数据自动归入 `default` 租户、角色为 `user`**，升级零停机；
-3. 回滚：`0002` 的 `downgrade()` 删除新增列与索引并还原 `uk_username`（要求租户内用户名不冲突）。
+3. `0003_invites`：新增 `invites` 表（§3.6），把租户准入从"注册自报租户"升级为"持码注册"；
+4. 回滚：`0002` 的 `downgrade()` 删除新增列与索引并还原 `uk_username`（要求租户内用户名不冲突）；
+   `0003` 的 `downgrade()` 先删租户索引再删表。
 
 > 注：向量库侧的隔离靠 chunk metadata 里的 `tenant_id` + 查询时 `where={"tenant_id": ...}` 过滤，
 > 不是靠 MySQL —— 这是多租户 RAG 最容易漏的一条，见 `docs/v2-plan.md` §6.3。
+
+### 3.6 invites 邀请码表（V2.1）
+
+把租户准入从"注册时自报租户"升级为"持码注册"：**租户与角色由码决定**，
+注册请求里的 `tenant` 字段被忽略。没有这张表，任何人注册时都能自选租户，
+隔离强制点（DAO + 向量库 metadata）再严也没有意义。
+
+| 列 | 类型 | 约束 | 说明 |
+| --- | --- | --- | --- |
+| `code` | VARCHAR(64) | PK | 邀请码本体（16 位十六进制，URL 安全、可人工输入） |
+| `tenant_id` | VARCHAR(64) | NOT NULL DEFAULT `'default'` | 持码注册只能进这个租户 |
+| `role` | VARCHAR(16) | NOT NULL DEFAULT `'user'` | 持码注册出来的角色（可邀请只读账号） |
+| `created_by` | BIGINT UNSIGNED | NULL | 签发人 user id；可空以允许运维直接插库 |
+| `max_uses` | INT | NOT NULL DEFAULT 1 | 最大可用次数；**0 = 不限** |
+| `used_count` | INT | NOT NULL DEFAULT 0 | 已用次数 |
+| `expires_at` | DATETIME | NULL | 过期时间；NULL = 永不过期 |
+| `created_at` | DATETIME | NOT NULL DEFAULT CURRENT_TIMESTAMP | 签发时间 |
+
+索引：`PRIMARY KEY (code)`、`idx_invites_tenant (tenant_id)`。
+
+**两条来自真机的设计约束**：
+
+1. **额度扣减必须是一条带条件的 `UPDATE`**，不能"先 SELECT 判断再 UPDATE"：
+   ```sql
+   UPDATE invites SET used_count = used_count + 1
+    WHERE code = %s AND tenant_id = %s
+      AND (max_uses = 0 OR used_count < max_uses)
+      AND (expires_at IS NULL OR expires_at > NOW())
+   ```
+   并发注册时两个请求可能同时读到 `used_count = 0` 都判定"还能用"，一次性码就被用了两次；
+   把校验条件写进 `WHERE` 由数据库保证只有一行被扣减，`rowcount != 1` 即表示没抢到。
+2. **过期时间由 MySQL 自己算**（`DATE_ADD(NOW(), INTERVAL n HOUR)`），不传应用进程生成的
+   `datetime`：消费时比较用的是 `NOW()`，两边时区不一致（本地开发很常见）会让有效期差整小时。

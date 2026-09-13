@@ -26,7 +26,7 @@ from typing import AsyncIterator, Iterator, Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from starlette.concurrency import run_in_threadpool
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from app.api.deps import get_current_user
 from app.core.prompt_templates import build_chat_prompt
@@ -140,7 +140,10 @@ async def _stream_body(container, body: AskRequest, tenant_id: str = "default") 
             deltas, sources = await _build_stream(container, mode, question, body, history, tenant_id)
 
             # 2) delta：逐个增量
-            for piece in deltas:
+            # **必须**用 iterate_in_threadpool：`chat_stream` 是同步生成器，直接 `for piece in deltas`
+            # 会在事件循环里同步阻塞 —— 真机实测一次 RAG 流式 15 秒，期间整个服务（连 /healthz）
+            # 都被卡住。放在线程池里迭代，事件循环才能继续服务其它请求。
+            async for piece in iterate_in_threadpool(deltas):
                 if not piece:
                     continue
                 answer_parts.append(piece)
@@ -182,10 +185,10 @@ async def _build_stream(container, mode: str, question: str, body: AskRequest,
     if mode == "chat":
         # ChatService 只有非流式 answer()，这里用同一套 Prompt 模板本地组装，行为完全对齐
         # （不动 app/services/chat.py，避免影响其它角色的文件）
-        deltas = await run_in_threadpool(
-            lambda: container.llm.chat_stream([{"role": "user", "content": build_chat_prompt(
-                question, history, container.settings.max_history_messages)}])
-        )
+        # `chat_stream` 是惰性生成器：这里只是**创建**它，真正的网络读取发生在迭代时
+        # （外层用 iterate_in_threadpool 迭代，不阻塞事件循环）。
+        deltas = container.llm.chat_stream([{"role": "user", "content": build_chat_prompt(
+            question, history, container.settings.max_history_messages)}])
         return deltas, []
 
     if mode == "agent" and container.agent is not None:

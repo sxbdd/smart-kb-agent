@@ -76,6 +76,19 @@ CREATE TABLE IF NOT EXISTS evaluation_runs (
     PRIMARY KEY (id),
     KEY idx_evaluation_runs_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评测记录';
+
+CREATE TABLE IF NOT EXISTS invites (
+    code       VARCHAR(64) NOT NULL,
+    tenant_id  VARCHAR(64) NOT NULL DEFAULT 'default',
+    role       VARCHAR(16) NOT NULL DEFAULT 'user',
+    created_by BIGINT UNSIGNED NULL,
+    max_uses   INT NOT NULL DEFAULT 1,
+    used_count INT NOT NULL DEFAULT 0,
+    expires_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (code),
+    KEY idx_invites_tenant (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='邀请码';
 """
 
 #: 老数据（升级前写入、没有 tenant_id 字段）统一归到这个租户
@@ -354,6 +367,111 @@ class Database:
                     "WHERE c.id IS NULL"
                 )
                 return cur.rowcount
+
+    # ---- invites（邀请码准入）----
+    def create_invite(
+        self,
+        code: str,
+        tenant_id: str = DEFAULT_TENANT,
+        role: str = "user",
+        created_by: Optional[int] = None,
+        max_uses: int = 1,
+        expires_in_hours: int = 0,
+    ) -> None:
+        """签发邀请码。`max_uses=0` 表示不限次数，`expires_in_hours=0` 表示永不过期。
+
+        **过期时间由 MySQL 自己算**（`DATE_ADD(NOW(), INTERVAL n HOUR)`），不传 Python 的
+        `datetime`：`consume_invite()` 用的是 `NOW()` 做比较，如果这里由应用进程生成时间戳，
+        一旦应用与数据库时区不一致（本地开发很常见），有效期就会有整小时的偏差。
+        """
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                if expires_in_hours and expires_in_hours > 0:
+                    cur.execute(
+                        "INSERT INTO invites(code, tenant_id, role, created_by, max_uses, used_count, expires_at) "
+                        "VALUES(%s, %s, %s, %s, %s, 0, DATE_ADD(NOW(), INTERVAL %s HOUR))",
+                        (code, tenant_id, role, created_by, max_uses, expires_in_hours),
+                    )
+                else:
+                    cur.execute(
+                        "INSERT INTO invites(code, tenant_id, role, created_by, max_uses, used_count, expires_at) "
+                        "VALUES(%s, %s, %s, %s, %s, 0, NULL)",
+                        (code, tenant_id, role, created_by, max_uses),
+                    )
+
+    def get_invite_by_code(self, code: str) -> Optional[dict[str, Any]]:
+        """**按码全局查**（不带 tenant_id）。
+
+        为什么允许这样查：注册时还不知道用户属于哪个租户 —— 租户正是由邀请码决定的。
+        `code` 是主键（全局唯一），所以按码查不存在歧义，也不会泄漏其它租户的信息
+        （调用方是注册流程，拿到的是"这个码对应哪个租户"，本来就是它该知道的）。
+        管理面的列表/删除仍然严格按 `tenant_id` 过滤，见 `list_invites` / `delete_invite`。
+        """
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM invites WHERE code = %s", (code,))
+                return cur.fetchone()
+
+    def get_invite(self, code: str, tenant_id: str = DEFAULT_TENANT) -> Optional[dict[str, Any]]:
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM invites WHERE code = %s AND tenant_id = %s",
+                    (code, tenant_id),
+                )
+                return cur.fetchone()
+
+    def list_invites(self, tenant_id: str = DEFAULT_TENANT) -> list[dict[str, Any]]:
+        """列出**本租户**的邀请码（不返回任何其它租户的码）。"""
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT code, tenant_id, role, created_by, max_uses, used_count, expires_at, created_at "
+                    "FROM invites WHERE tenant_id = %s ORDER BY created_at DESC",
+                    (tenant_id,),
+                )
+                return cur.fetchall()
+
+    def delete_invite(self, code: str, tenant_id: str = DEFAULT_TENANT) -> None:
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM invites WHERE code = %s AND tenant_id = %s",
+                    (code, tenant_id),
+                )
+
+    def consume_invite(self, code: str, tenant_id: str = DEFAULT_TENANT) -> Optional[dict[str, Any]]:
+        """原子地"占用一次"邀请码：成功返回该码所在行，失败（不存在/已用尽/已过期）返回 None。
+
+        为什么要用一条 `UPDATE` 当闸门，而不是"先 SELECT 判断再 UPDATE"：
+        并发注册时两个请求可能同时读到 `used_count=0`、都判定"还能用"，
+        于是一次性邀请码被用掉两次。把**校验条件写进 UPDATE 的 WHERE**，
+        由数据库保证只有一行被扣减，`rowcount != 1` 即表示没抢到。
+
+        `tenant_id` 也参与匹配：管理员只能消费**自己租户**的邀请码。
+        """
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE invites SET used_count = used_count + 1 "
+                    "WHERE code = %s AND tenant_id = %s "
+                    "  AND (max_uses = 0 OR used_count < max_uses) "
+                    "  AND (expires_at IS NULL OR expires_at > NOW())",
+                    (code, tenant_id),
+                )
+                if cur.rowcount != 1:
+                    return None
+                cur.execute(
+                    "SELECT * FROM invites WHERE code = %s AND tenant_id = %s",
+                    (code, tenant_id),
+                )
+                return cur.fetchone()
 
     # ---- messages ----
     def add_message(self, conv_id: str, role: str, content: str, sources: Optional[list[dict]] = None) -> str:

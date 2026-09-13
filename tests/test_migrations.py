@@ -23,7 +23,7 @@ from app.models.database import SCHEMA
 ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = ROOT / "alembic.ini"
 VERSIONS_DIR = ROOT / "migrations" / "versions"
-EXPECTED_TABLES = ("users", "documents", "conversations", "messages", "evaluation_runs")
+EXPECTED_TABLES = ("users", "documents", "conversations", "messages", "evaluation_runs", "invites")
 
 # 建表语句里这些开头的行不是列定义
 _CONSTRAINT_PREFIXES = (
@@ -137,16 +137,21 @@ def test_initial_revision_file_exists_and_defines_downgrade() -> None:
 
 def test_revision_chain_is_single_initial_head() -> None:
     script = ScriptDirectory.from_config(_make_config())
-    assert script.get_heads() == ["0002_multi_tenant"]
+    assert script.get_heads() == ["0003_invites"]
     initial = script.get_revision("0001_initial")
     assert initial.down_revision is None
     assert callable(initial.module.upgrade)
     assert callable(initial.module.downgrade)
-    # 0002 必须串在 0001 之后，且自身可正反执行
-    multi_tenant = script.get_revision("0002_multi_tenant")
-    assert multi_tenant.down_revision == "0001_initial"
-    assert callable(multi_tenant.module.upgrade)
-    assert callable(multi_tenant.module.downgrade)
+    # 每个增量 revision 都必须串在上一版之后，且自身可正反执行
+    chain = [
+        ("0002_multi_tenant", "0001_initial"),
+        ("0003_invites", "0002_multi_tenant"),
+    ]
+    for revision_id, down_revision in chain:
+        revision = script.get_revision(revision_id)
+        assert revision.down_revision == down_revision, revision_id
+        assert callable(revision.module.upgrade)
+        assert callable(revision.module.downgrade)
 
 
 def test_alembic_ini_does_not_hardcode_credentials() -> None:
@@ -159,7 +164,7 @@ def test_alembic_ini_does_not_hardcode_credentials() -> None:
 # ---------------- 离线 upgrade ----------------
 
 
-def test_offline_sql_creates_all_five_tables(head_sql: str) -> None:
+def test_offline_sql_creates_all_business_tables(head_sql: str) -> None:
     for table in EXPECTED_TABLES:
         assert f"CREATE TABLE {table} (" in head_sql, f"{table} 没有建表语句"
 
@@ -175,9 +180,10 @@ def test_offline_sql_has_foreign_key_index_and_engine_options(head_sql: str) -> 
         ("idx_documents_tenant", "documents"),
         ("idx_conversations_tenant", "conversations"),
         ("idx_evaluation_runs_tenant", "evaluation_runs"),
+        ("idx_invites_tenant", "invites"),
     ):
         assert f"CREATE INDEX {index_name} ON {table} (tenant_id)" in head_sql, index_name
-    # 5 张业务表都是 InnoDB + utf8mb4（alembic_version 用默认选项，不计入）
+    # 6 张业务表都是 InnoDB + utf8mb4（alembic_version 用默认选项，不计入）
     assert head_sql.count("ENGINE=InnoDB") == len(EXPECTED_TABLES)
     assert head_sql.count("DEFAULT CHARSET=utf8mb4") == len(EXPECTED_TABLES)
 

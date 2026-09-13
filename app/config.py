@@ -147,6 +147,19 @@ class Settings:
     allow_self_register: bool = field(default_factory=lambda: _bool("ALLOW_SELF_REGISTER", True))
     # 指定该用户名在首次注册时自动成为所在租户的管理员（留空则不设）
     bootstrap_admin_username: str = field(default_factory=lambda: _env("BOOTSTRAP_ADMIN_USERNAME", ""))
+    #: 注册是否必须持邀请码。
+    #: 开启后只有持有 admin 签发的邀请码才能注册，且租户与角色**由邀请码决定**，
+    #: 注册请求里的 `tenant` 字段一律忽略 —— 否则任何人都能自选租户，
+    #: 隔离强制点做得再严也没有意义（这就是 V2「演示级准入」的缺口）。
+    #:
+    #: 代码里默认 **false**，是为了**不打断已在运行的部署**：存量库里所有账号都是免码注册的，
+    #: 一旦默认开启就没人能再注册，而管理员此时可能还没有可用的邀请码。
+    #: `.env.example` 给的是 `true` —— 新部署照抄即可，生产环境必须开启。
+    require_invite: bool = field(default_factory=lambda: _bool("REQUIRE_INVITE", False))
+    #: 邀请码默认有效期（小时）；0 表示永不过期
+    invite_ttl_hours: int = field(default_factory=lambda: _int("INVITE_TTL_HOURS", 0))
+    #: 邀请码默认可用次数；0 表示不限次数
+    invite_default_max_uses: int = field(default_factory=lambda: _int("INVITE_DEFAULT_MAX_USES", 1))
 
     # MCP server（把知识库暴露给支持 MCP 的客户端）
     enable_mcp: bool = field(default_factory=lambda: _bool("ENABLE_MCP", True))

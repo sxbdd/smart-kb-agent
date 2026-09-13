@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import os
 import sys
 import uuid
@@ -57,6 +58,7 @@ class FakeDatabase:
         self.conversations: dict[str, dict[str, Any]] = {}
         self.messages: list[dict[str, Any]] = []
         self.evaluation_runs: dict[str, dict[str, Any]] = {}
+        self.invites: dict[str, dict[str, Any]] = {}
         self._next_user_id = 1
         self.closed = False
 
@@ -220,6 +222,61 @@ class FakeDatabase:
 
     def list_evaluation_runs(self, tenant_id: str = "default") -> list[dict[str, Any]]:
         return [r for r in self.evaluation_runs.values() if r["tenant_id"] == tenant_id]
+
+    # ---- invites ----
+    @staticmethod
+    def _fmt(moment: datetime.datetime) -> str:
+        return moment.strftime("%Y-%m-%d %H:%M:%S")
+
+    def create_invite(
+        self,
+        code: str,
+        tenant_id: str = "default",
+        role: str = "user",
+        created_by: Optional[int] = None,
+        max_uses: int = 1,
+        expires_in_hours: int = 0,
+    ) -> None:
+        expires = (
+            self._fmt(datetime.datetime.now() + datetime.timedelta(hours=int(expires_in_hours)))
+            if expires_in_hours and int(expires_in_hours) > 0
+            else None
+        )
+        self.invites[code] = {
+            "code": code, "tenant_id": tenant_id, "role": role, "created_by": created_by,
+            "max_uses": int(max_uses), "used_count": 0, "expires_at": expires,
+            "created_at": "2026-01-01 00:00:00",
+        }
+
+    def get_invite_by_code(self, code: str) -> Optional[dict[str, Any]]:
+        """按码全局查（注册时还不知道租户，租户正是由码决定的）。"""
+        return self.invites.get(code)
+
+    def get_invite(self, code: str, tenant_id: str = "default") -> Optional[dict[str, Any]]:
+        row = self.invites.get(code)
+        if row is None or row["tenant_id"] != tenant_id:
+            return None
+        return row
+
+    def list_invites(self, tenant_id: str = "default") -> list[dict[str, Any]]:
+        return [r for r in self.invites.values() if r["tenant_id"] == tenant_id]
+
+    def delete_invite(self, code: str, tenant_id: str = "default") -> None:
+        row = self.invites.get(code)
+        if row is not None and row["tenant_id"] == tenant_id:
+            del self.invites[code]
+
+    def consume_invite(self, code: str, tenant_id: str = "default") -> Optional[dict[str, Any]]:
+        """与真实实现同语义：不存在 / 跨租户 / 已过期 / 已用尽 → None，成功则额度 +1。"""
+        row = self.invites.get(code)
+        if row is None or row["tenant_id"] != tenant_id:
+            return None
+        if row["expires_at"] is not None and row["expires_at"] <= self._fmt(datetime.datetime.now()):
+            return None
+        if int(row["max_uses"]) != 0 and int(row["used_count"]) >= int(row["max_uses"]):
+            return None
+        row["used_count"] += 1
+        return dict(row)
 
     def close(self) -> None:
         self.closed = True

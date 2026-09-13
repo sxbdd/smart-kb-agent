@@ -42,7 +42,11 @@
 
 ```powershell
 # ---- 离线（默认）----
-.venv\Scripts\python -m pytest                 # 148 passed, 4 skipped
+.venv\Scripts\python -m pytest -o addopts=""    # 419 passed, 10 skipped
+# 注意：pytest.ini 的 addopts 带了 -q，再叠加命令行的 -q 会变成 -qq，
+# 那就**看不到汇总行**了。想看"N passed"两种办法：
+#   .venv\Scripts\python -m pytest -o addopts=""      （清掉 ini 里的 addopts）
+#   .venv\Scripts\python -m pytest -p no:warnings     （与 -q 叠加也仍会打印汇总）
 
 # ---- 只装离线测试所需的最小依赖（不需要 torch / chromadb，约 20MB）----
 .venv\Scripts\python -m pip install -r requirements-ci.txt
@@ -53,10 +57,22 @@
 .venv\Scripts\python -m pytest -m "not integration"             # 显式排除真实环境
 .venv\Scripts\python -m pytest --collect-only -q                # 只看用例数
 
+# ---- 前端 E2E（真实浏览器：Playwright + 系统 Edge；默认跳过）----
+$env:RUN_E2E=1
+.venv\Scripts\python -m pytest -o addopts="" tests\test_frontend_e2e.py -v
+$env:RUN_E2E=$null
+
 # ---- 真实环境端到端（默认跳过；会真实调用 LLM 并写入 MySQL）----
 $env:RUN_INTEGRATION=1
 .venv\Scripts\python -m pytest tests\test_integration_real.py -v -s
 $env:RUN_INTEGRATION=$null
+
+# ---- 真机验收：多租户（65 项断言，零费用、不调用 LLM）----
+.venv\Scripts\python scripts\verify_tenancy.py --part all
+
+# ---- 真机验收：真实流式 SSE（**会真实调用 LLM，消耗 token**）----
+.venv\Scripts\python scripts\verify_streaming.py
+.venv\Scripts\python scripts\verify_streaming.py --skip-http   # 只测 LLM 客户端层
 
 # ---- 评测基线（调用 LLM，有费用；结果写入 evaluation_runs）----
 .venv\Scripts\python scripts\run_evaluation.py --repeat 2 --details
@@ -66,6 +82,10 @@ $env:RUN_INTEGRATION=$null
 
 # ---- 检索/并发性能基准（零费用；加 --with-llm 才测端到端问答）----
 .venv\Scripts\python scripts\benchmark.py --queries 39 --concurrency 1,4,8
+
+# ---- 运维：清理 Chroma 孤立 HNSW 段目录（反复重建索引后会堆积；需停服执行）----
+.venv\Scripts\python scripts\cleanup_chroma.py                 # 先看（dry-run）
+.venv\Scripts\python scripts\cleanup_chroma.py --apply --keep-count 13
 ```
 
 CI：`.github/workflows/ci.yml`，push / PR 时在 **Python 3.10 与 3.12** 上跑 `compileall` + 离线套件。
@@ -265,6 +285,39 @@ CI：`.github/workflows/ci.yml`，push / PR 时在 **Python 3.10 与 3.12** 上�
 
 用例自带清理：`uploaded` fixture 在用例结束后 `DELETE /documents/{id}`。
 
+## 5.1 V2 新增用例（按能力，共 291 条）
+
+V1 那 168 条继续保留；V2 按新能力补了下面这些。**每条都对应一个可能漏掉的强制点**，
+不是凑数用例（括号内为实测用例数）：
+
+| 能力 | 文件（用例数） | 守住什么 |
+| --- | --- | --- |
+| 邀请码准入 | `test_invites.py`（30） | 无码/错码/过期/用尽全部 403；**租户与角色由码决定、body 的 tenant 与 role 都被忽略**；一次性码不超发；重名 409 不吃额度；**bootstrap 例外被收窄（不能拿它越权抢别的租户）**；平台租户才能跨租户签码；`require_invite=false` 的旧行为回归 |
+| 多租户 + RBAC | `test_tenancy.py`（24） | 三层强制点各一条：路由/角色矩阵、DAO 跨租户查不到、**向量库跨租户检索不到**；`ALLOW_SELF_REGISTER=false`；`/admin/users` 只看本租户 |
+| 多租户（DAO 之外） | `test_admin_routes.py`（33） | 管理面端点的角色、跨租户建号 403（不静默改写）、409 透传、密码不回显 |
+| 租户 → 向量库 | `test_vector_store_tenancy.py`（39） | 三种实现（内存/Chroma/协议）行为逐条一致；`tenant_id=None` 不过滤（V1 兼容）；跨租户删不掉；**老数据缺 `tenant_id` 的行为差异被显式固化** |
+| 租户 → Agent/评测 | `test_agent_tenancy.py`（10） | 租户必须穿过工具链到达 `rag.search`：用"把 `tenant_id` 声明为必填关键字"的假 rag 做签名护栏（漏传即报错，而不是悄悄退化成全局检索） |
+| 检索阈值 | `test_vector_store_threshold.py`（22） | `min_score<=0` 与 V1 逐条一致；过滤发生在截断前；只减不增、顺序不变 |
+| 流式 SSE | `test_streaming.py`（25） | LLM 层 10 条（含 SSE 噪声帧、`[DONE]` 截断、推理模型吃预算后翻倍、已产出后中断必须报错）+ **增量产出回归**；接口层事件序列/落库/断连兜底/404 开关 |
+| DB 迁移 | `test_migrations.py`（10） | 离线 SQL 与 `SCHEMA` **逐列一致**（解析器支持 `ALTER TABLE ADD COLUMN`）；revision 链；downgrade 先子后父；真库往返（integration，默认跳过） |
+| MCP server | `test_mcp_server.py`（47） | JSON-RPC 协议层（错误码 -32600/-32601/-32602/-32603）、两个工具的契约、stdio 往返、**惰性容器**、坏帧不断流 |
+| Excel/CSV + OCR | `test_ocr.py`（32）、`test_parser_splitter.py`（36） | 新格式解析、OCR 引擎插件化与优雅降级、`ENABLE_OCR` 开关、经 `/upload` 的真实调用路径 |
+| Redis 限流 | `test_ratelimit_backend.py`（16） | 两后端语义一致、超限不计数（DECR 回滚）、Redis 不可用时回退进程内 |
+| 前端 E2E | `test_frontend_e2e.py`（3） | 真实浏览器（Playwright + 系统 Edge）：登录页→注册→三栏→上传→提问→引用来源→会话列表；计算题显示 `agent` 标签。**默认跳过**（`RUN_E2E=1`） |
+
+### 5.2 两种"真机验收"与单测的分工
+
+单测跑的是 `FakeDatabase` + `InMemoryVectorStore`。**假库的隔离语义是"照着真库写的"，
+所以假库通过 ≠ 真库通过** —— 真机问题必须由下面两个脚本兜住（都是可重复执行的验收，不是一次性调试脚本）：
+
+| 脚本 | 覆盖 | 实测结论 |
+| --- | --- | --- |
+| `scripts/verify_tenancy.py` | 临时库迁移往返 / 真实库升级零丢数据且幂等 / **真实 Chroma 双租户隔离** / 真实 MySQL+Chroma 上的 HTTP 角色矩阵 / **邀请码准入（含"body 的 tenant 被忽略"与"bootstrap 不能越权"）** | 5 部分 **81 项断言全通过** |
+| `scripts/verify_streaming.py` | 真实 DeepSeek：客户端层流式非空/无 U+FFFD/首字延迟；HTTP 层事件序列、增量数、TTFT、**流式期间 `/healthz` 未被阻塞**；与非流式一致性；关闭开关后回退 | 17 项断言通过，见 §11 的 P0 记录 |
+
+> 这两个脚本正是"真机才暴露"的价值所在：`verify_streaming.py` 第一次跑就抓出了
+> **真实流式 100% 失败**的 P0（24 条离线用例全绿），详见 §11。
+
 ## 6. 评测方案
 
 评测是"系统答得准不准"的唯一量化证据。**结论必须由你亲自跑出来**，本文只给方法与判读规则。
@@ -405,17 +458,20 @@ $env:RUN_INTEGRATION=1; .venv\Scripts\python -m pytest tests\test_integration_re
 
 ## 9. 已知缺口与未覆盖
 
+> V2 收口后重写：下表只保留**当前仍然存在**的缺口。V2 已经补掉的（MIN_SCORE 评估、语料扩容、
+> 前端 E2E、Redis 限流、多租户/RBAC、Alembic 迁移）不再列在这里，见 §11 的验证记录。
+
 | 缺口 | 影响 | 备注 |
 | --- | --- | --- |
-| **检索无相似度阈值** | 全部片段不相关时仍返回 top-k，拒答完全依赖 Prompt 守规矩 | 已用 `test_knowledge_search_has_no_score_threshold` 固化行为；是否引入 `MIN_SCORE` 待评估 |
-| **语料仍偏小** | 6 文档 / 13 chunk；指标只能说明"在此语料下的表现"，不能外推 | 已加干扰文档并拆出多 chunk；继续扩容建议数百 chunk 量级 |
-| **真实 LLM 非确定性** | 已有 2 次重跑（极差 0.0pp），但无更多样本与置信区间 | 基线两次一致；改动后仍建议 ≥2 次 |
-| **无前端 E2E** | 只有静态断言（页面含某字符串），无浏览器级交互测试 | 未引入 Playwright；当前靠 §8 手工步骤 |
-| **并发能力有限** | 4 并发后吞吐见顶（~144 QPS），延迟线性上涨 | 已实测（§11）；瓶颈是 CPU 上的查询向量化，非 Chroma |
+| **会话归属只到租户级** | 同租户内的用户互相可见对方的会话 | 本次范围外；要做需给 `conversations` 加 `user_id` 并在 DAO 加条件 |
+| **邀请码并发未压测** | 一次性码靠带条件的 `UPDATE` 保证不超发，但没做真并发压测 | 语义有单测覆盖；压测待补 |
+| **OCR 只验证了链路，未评估准确率** | 扫描件能解析、能入库，但识别质量没有指标 | 需要一份带标注的扫描件样本集 |
+| **真实 LLM 流式的"首字"仍偏晚** | `deepseek-v4-flash` 是推理模型，`reasoning_content` 占了大部分时间；实测首字 ≈ 总耗时的 97% | 已修掉"读完才吐"的实现问题（§11）；要更早出字只能把思考过程也透出，属产品决策 |
+| **Rerank 在 20 候选下才有收益，延迟不可接受** | 190 chunk 下候选 5 时 R@1 零增益，候选 20 才 +2.6pp 但要 6.2s/次 | 已实测，维持 `ENABLE_RERANK=false`（ADR-011） |
 | **`chromadb` 有 5 个未修复漏洞** | 生产依赖集存在已知风险，上游无修复版本 | CI 已加 `pip-audit`（生产集仅提示）；详见 §11 |
-| **限流是进程内实现** | 多副本部署时各副本独立计数，限流失效 | 需换 Redis 等共享存储 |
-| **单租户** | 无权限隔离，所有用户共享同一知识库 | ADR-009 有意为之 |
-| **无 DB 迁移工具** | 建表用 `CREATE TABLE IF NOT EXISTS`，加字段需手工 | 可引入 Alembic |
+| **并发能力有限** | 4 并发后吞吐见顶（~144 QPS），延迟线性上涨 | 已实测（§11）；瓶颈是 CPU 上的查询向量化，非 Chroma |
+| **MCP server 未接真实客户端做长期联调** | 协议层有 47 条离线用例（含 stdio 往返），但没和 Claude Desktop / 其它宿主长期跑 | 传输层只覆盖到"进程内 stdio 往返" |
+| **限流的多副本一致性未压测** | `RATE_LIMIT_BACKEND=redis` 已实现且有回退，但没做多进程共享计数的压测 | 单进程语义有 16 条用例覆盖 |
 
 ## 10. 维护规范
 
@@ -430,6 +486,63 @@ $env:RUN_INTEGRATION=1; .venv\Scripts\python -m pytest tests\test_integration_re
    中文注释会直接抛 `UnicodeDecodeError` 导致依赖审计失败（见 `requirements.txt` 末尾注释）。
 
 ## 11. 附：验证记录与已修问题
+
+### V2 收口记录（2026-09-14）
+
+**全量回归**：`449 passed / 10 skipped / 0 failed`（24 个模块 / 459 用例；`-o addopts=""` 才看得到汇总行，原因见 §3）。
+
+**真机验收（两个脚本，零假设）**
+
+| 脚本 | 结果 |
+| --- | --- |
+| `scripts/verify_tenancy.py --part all` | 五部分 **81 项断言全通过**：临时库 `0001→head→base` 往返（18）、真实库 `stamp→upgrade` 且行数零丢失 + 幂等（20）、真实 Chroma 双租户隔离（9）、真实 HTTP 角色矩阵 + 跨租户检索隔离（18）、**邀请码准入（16，含"bootstrap 不能越权抢别的租户"）** |
+| `scripts/verify_streaming.py` | 四阶段 **17 项断言全通过**（真实 DeepSeek + 真实 MySQL + 真实 bge + 真实 Chroma） |
+
+**前端 E2E**：`RUN_E2E=1` → **3 passed**（真实 Edge）。
+
+**存量库升级 + 索引重灌**：`stamp 0001_initial → upgrade 0002_multi_tenant`，
+`information_schema` 校验列/索引/唯一键/外键齐全，行数不变
+（users 4 / documents 6 / conversations 6 / messages 14 / evaluation_runs 6）；
+V1 评测基线复跑 **47 题 × 2 次、四项指标 100%、极差 0.0pp**（迁移无回归）。
+
+**Chroma 目录清理**：`scripts/cleanup_chroma.py` 删掉 **10 个孤立 HNSW 段目录（约 2.1 MB）**，
+保留 1 个活跃段，删后 `count()` 复核仍为 **13**（证明删的是无人引用的目录）。
+
+#### 真机流式抓出的三个 P0（全部已修 + 已加回归护栏）
+
+V2 的流式曾经有 **24 条离线用例全绿**，但 `scripts/verify_streaming.py` 第一次跑就全线失败。
+根因是**离线桩把无效用法固化成了"事实"** —— 这是"必须有真机验收"的最好例证。
+
+| # | 问题 | 证据 | 修复 |
+| --- | --- | --- | --- |
+| P0-1 | `chat_stream` 用 `self.httpx.post(..., stream=True)`，而**顶层 `httpx.post()` 没有 `stream` 参数** → 真实流式 100% 失败（`TypeError`） | 真机首跑即 `LLMError: LLM 调用失败：post() got an unexpected keyword argument 'stream'` | 改用 `httpx.stream()` 上下文管理器；**测试桩同步改为模拟 `httpx.stream`**（原桩断言 `stream=True` 正是把 bug 锁死的元凶） |
+| P0-2 | 先把整条流读完再一次性 `yield` → **首字延迟恒等于总耗时**，流式在体验上等于没有 | 实测 httpx 层首字 **15.531s** / 结束 **15.547s**（只差 16ms） | 改为收到一帧就 `yield` 一帧（仍保留"已产出后中断必须报错、绝不重试"的不变量）；新增回归用例 `test_chat_stream_yields_incrementally_instead_of_after_full_read` 断言"取到第一片时上游尚未读完" |
+| P0-3 | `routes_stream._stream_body` 在**事件循环里同步迭代**同步生成器 → 生成期间整个服务被阻塞 | 修复后用并发探测验证：流式期间 `/healthz` 最慢 **0.016s**（判据 < 1s） | 用 `starlette.concurrency.iterate_in_threadpool` 迭代；验收脚本内置该探测，回归即失败 |
+
+修复后的实测指标（真实 DeepSeek）：
+
+| 指标 | 修复前 | 修复后 |
+| --- | --- | --- |
+| 客户端首字 / 总耗时 | 1.593s / 1.593s（**100%**） | 1.672s / 1.797s |
+| HTTP 首字 / 总耗时 | 15.531s / 15.547s（99.9%） | 5.937s / 6.125s（96.9%） |
+| 流式期间 `/healthz` 最慢 | （未探测；实现上会阻塞） | **0.016s** |
+| 增量片段数 | 73（一次性到达） | 81（渐进到达） |
+
+> **诚实说明**：HTTP 层首字仍占总耗时 96.9%，**不是实现问题了**，而是
+> `deepseek-v4-flash` 是推理模型 —— `reasoning_content` 占了大部分时间，而应用只展示
+> `content`。所以本次修复解决的是"吐得晚"（实现缺陷），没有也解决不了"想得久"（模型特性）。
+> 要再往前一步只能把思考过程也透出（产品决策，当前不做）。
+
+#### 邀请码准入（V2.1）发现并修掉的两个问题
+
+| # | 问题 | 怎么发现的 | 修复 |
+| --- | --- | --- | --- |
+| 1 | **bootstrap 例外越权**：`require_invite=True` 时，任何人用 `BOOTSTRAP_ADMIN_USERNAME` + 自选 `tenant` 就能免码注册成那个租户的 admin；若目标租户已存在且无同名账号，等于跨租户越权读数据 | 邀请码功能的评审者实测复现：`{"username":"root","tenant":"victim-corp"}` → 200 / `role=admin` | bootstrap 例外收窄为 **`DEFAULT_TENANT` + 该租户尚无管理员**；真机验收里加了一条"必须 403"的断言，单测里加了两条回归 |
+| 2 | **`0003_invites` 升级撞 `1050 Table 'invites' already exists`**：本项目的建表有**两个入口** —— 运行时 `db.init()`（执行 `SCHEMA`，全是 `CREATE TABLE IF NOT EXISTS`）与 Alembic 迁移。只要应用启动过一次，`invites` 就已经被建出来了 | 真机验收 `--part upgrade` 直接抛 `(1050, "Table 'invites' already exists")` | 0003 改为**幂等**：连库执行时先查 `information_schema`，已存在就跳过（与 0002 补外键同一套路）；离线 `--sql` 仍渲染完整 DDL，保住"迁移结果 == SCHEMA"的断言 |
+
+> 顺带修掉验收脚本自身的两个缺陷：**硬编码版本号**（`0002_multi_tenant` → 改为从
+> `ScriptDirectory` 取 head，否则每加一版迁移脚本就失效）与一处**写反的角色期望**
+> （跨租户删除的方向搞反，脚本自己报错才发现）。验收脚本也是代码，也会错。
 
 ### 真实验证记录 · V1 基线（2026-09-14，现行语料与测试集）
 
