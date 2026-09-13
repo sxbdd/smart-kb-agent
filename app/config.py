@@ -26,6 +26,14 @@ def _int(key: str, default: int) -> int:
         return default
 
 
+def _path(key: str, default: str) -> str:
+    raw = os.getenv(key, default)
+    p = Path(raw)
+    if not p.is_absolute():
+        p = BASE_DIR / p
+    return str(p)
+
+
 def _bool(key: str, default: bool) -> bool:
     raw = os.getenv(key)
     if raw is None:
@@ -53,7 +61,7 @@ class Settings:
 
     # 向量库
     vector_store: str = _env("VECTOR_STORE", "chroma")
-    chroma_persist_dir: str = _env("CHROMA_PERSIST_DIR", str(BASE_DIR / "data" / "chroma_db"))
+    chroma_persist_dir: str = _path("CHROMA_PERSIST_DIR", str(BASE_DIR / "data" / "chroma_db"))
 
     # MySQL
     mysql_host: str = _env("MYSQL_HOST", "127.0.0.1")
@@ -67,8 +75,8 @@ class Settings:
     jwt_expire_minutes: int = _int("JWT_EXPIRE_MINUTES", 720)
 
     # 数据目录
-    data_dir: str = _env("DATA_DIR", str(BASE_DIR / "data"))
-    documents_dir: str = _env("DOCUMENTS_DIR", str(BASE_DIR / "data" / "documents"))
+    data_dir: str = _path("DATA_DIR", str(BASE_DIR / "data"))
+    documents_dir: str = _path("DOCUMENTS_DIR", str(BASE_DIR / "data" / "documents"))
 
     # 切分与检索
     chunk_size: int = _int("CHUNK_SIZE", 512)

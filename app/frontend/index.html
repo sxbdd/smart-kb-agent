@@ -6,33 +6,44 @@
 <title>企业级 RAG + Agent 智能知识库系统</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2933; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: linear-gradient(135deg,#eef2f7 0%,#e6ecf5 100%); color: #1f2933; min-height: 100vh; }
   header { background: #1f2933; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
-  header h1 { font-size: 18px; }
-  #auth-area { font-size: 14px; }
-  main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
-  .card { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-  .card h2 { font-size: 16px; margin-bottom: 12px; }
-  input, button, textarea { font-size: 14px; padding: 8px 12px; border: 1px solid #d9e2ec; border-radius: 6px; }
-  button { background: #2563eb; color: #fff; border: none; cursor: pointer; }
+  header h1 { font-size: 17px; font-weight: 600; }
+  #auth-area { font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  main { max-width: 940px; margin: 24px auto; padding: 0 16px 48px; }
+  .card { background: #fff; border-radius: 12px; padding: 22px; margin-bottom: 16px; box-shadow: 0 2px 10px rgba(31,41,51,.08); }
+  .card h2 { font-size: 16px; margin-bottom: 14px; color: #1f2933; }
+  label { display: block; font-size: 13px; color: #52606d; margin: 10px 0 4px; }
+  input, textarea { font-size: 14px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 8px; width: 100%; outline: none; transition: border-color .15s; }
+  input:focus, textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+  button { font-size: 14px; padding: 10px 18px; border: none; border-radius: 8px; background: #2563eb; color: #fff; cursor: pointer; transition: background .15s; }
   button:hover { background: #1d4ed8; }
-  button:disabled { background: #9ca3af; cursor: not-allowed; }
-  input[type=text], input[type=password], input[type=file], textarea { width: 100%; margin-bottom: 8px; }
-  textarea { min-height: 60px; resize: vertical; }
-  .row { display: flex; gap: 8px; }
-  .row input { flex: 1; margin-bottom: 0; }
-  .tag { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 6px; }
-  .answer { background: #f8fafc; border-left: 3px solid #2563eb; padding: 12px; margin: 8px 0; border-radius: 4px; white-space: pre-wrap; }
-  .sources { font-size: 12px; color: #64748b; margin-top: 6px; }
-  .metrics { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
-  .metric { flex: 1; min-width: 120px; background: #f0f9ff; border-radius: 8px; padding: 14px; text-align: center; }
-  .metric .val { font-size: 22px; font-weight: 700; color: #0369a1; }
-  .metric .lbl { font-size: 12px; color: #475569; margin-top: 4px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: left; }
-  .hidden { display: none; }
-  .msg { font-size: 13px; color: #64748b; margin-top: 6px; }
+  button.secondary { background: #059669; }
+  button.secondary:hover { background: #047857; }
+  button.ghost { background: transparent; color: #cbd2d9; border: 1px solid #52606d; padding: 6px 12px; }
+  button.ghost:hover { background: #323f4b; }
+  button:disabled { background: #9aa5b1; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; margin-top: 14px; }
+  .row input { margin: 0; }
+  .row input[type=file] { flex: 1; padding: 8px; }
+  .hint { font-size: 13px; color: #7b8794; margin-bottom: 6px; }
+  .tag { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 2px 10px; border-radius: 6px; font-size: 12px; margin-bottom: 8px; }
+  .answer { background: #f8fafc; border-left: 3px solid #2563eb; padding: 14px; margin: 8px 0; border-radius: 6px; white-space: pre-wrap; line-height: 1.6; }
+  .sources { font-size: 12px; color: #64748b; margin-top: 8px; }
+  .metrics { display: flex; flex-wrap: wrap; gap: 12px; margin: 14px 0; }
+  .metric { flex: 1; min-width: 110px; background: #eff6ff; border-radius: 10px; padding: 14px; text-align: center; }
+  .metric .val { font-size: 22px; font-weight: 700; color: #1d4ed8; }
+  .metric .lbl { font-size: 12px; color: #52606d; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+  th { color: #52606d; font-weight: 600; }
+  .msg { font-size: 13px; margin-top: 10px; min-height: 18px; }
   .err { color: #dc2626; }
+  .ok { color: #059669; }
+  .hidden { display: none !important; }
+  #login-panel { max-width: 400px; margin: 60px auto; }
+  #login-panel h2 { font-size: 20px; text-align: center; margin-bottom: 4px; }
+  #login-panel .sub { text-align: center; color: #7b8794; font-size: 13px; margin-bottom: 20px; }
 </style>
 </head>
 <body>
@@ -40,17 +51,20 @@
   <h1>企业级 RAG + Agent 智能知识库系统</h1>
   <div id="auth-area">
     <span id="auth-user"></span>
-    <button id="btn-logout" class="hidden" onclick="logout()">退出</button>
+    <button id="btn-logout" class="ghost hidden" onclick="logout()">退出</button>
   </div>
 </header>
 <main>
   <div id="login-panel" class="card">
-    <h2>登录</h2>
-    <input type="text" id="login-username" placeholder="用户名" />
-    <input type="password" id="login-password" placeholder="密码" />
+    <h2>登录 / 注册</h2>
+    <p class="sub">首次使用请点"注册"</p>
+    <label>用户名（至少 3 位）</label>
+    <input type="text" id="login-username" placeholder="例如：zhangsan" autocomplete="username" />
+    <label>密码（至少 6 位）</label>
+    <input type="password" id="login-password" placeholder="至少 6 位" autocomplete="current-password" />
     <div class="row">
-      <button onclick="login()">登录</button>
-      <button onclick="register()" style="background:#059669">注册</button>
+      <button onclick="doLogin()" style="flex:1">登录</button>
+      <button class="secondary" onclick="doRegister()" style="flex:1">注册</button>
     </div>
     <div class="msg" id="login-msg"></div>
   </div>
@@ -58,15 +72,18 @@
   <div id="workspace" class="hidden">
     <div class="card">
       <h2>文档管理</h2>
-      <input type="file" id="file-input" accept=".pdf,.md,.txt,.docx" />
-      <div class="row"><button onclick="uploadDoc()">上传并建立索引</button></div>
+      <div class="row">
+        <input type="file" id="file-input" accept=".pdf,.md,.txt,.docx" />
+        <button onclick="uploadDoc()">上传并建立索引</button>
+      </div>
       <div class="msg" id="upload-msg"></div>
     </div>
 
     <div class="card">
-      <h2>智能问答（Router 自动分发 Chat / RAG / Agent）</h2>
+      <h2>智能问答</h2>
+      <p class="hint">Router 会自动分发：闲聊走 Chat、知识问题走 RAG、需要工具走 Agent</p>
       <div class="row">
-        <input type="text" id="question" placeholder="输入问题，例如：出差住宿标准是多少？" />
+        <input type="text" id="question" placeholder="例如：出差住宿标准是多少？" onkeydown="if(event.key==='Enter')ask()" />
         <button onclick="ask()">提问</button>
       </div>
       <div id="answer-area"></div>
@@ -77,7 +94,7 @@
       <div class="row">
         <input type="text" id="test-set-path" value="data/evaluation/test_set_smart.json" />
         <button onclick="runEval()">运行评测</button>
-        <button onclick="loadRuns()">刷新历史</button>
+        <button class="secondary" onclick="loadRuns()">刷新历史</button>
       </div>
       <div id="eval-metrics"></div>
       <div id="eval-runs"></div>
@@ -90,21 +107,35 @@ const BASE = "";
 let token = localStorage.getItem("kb_token") || "";
 let username = localStorage.getItem("kb_user") || "";
 
-function authHeaders() {
-  return token ? { "Authorization": "Bearer " + token } : {};
+function authHeaders() { return token ? { "Authorization": "Bearer " + token } : {}; }
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) { return (s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function formatError(data) {
+  if (!data) return "请求失败";
+  if (typeof data.detail === "string") return data.detail;
+  if (Array.isArray(data.detail)) {
+    const map = { username: "用户名", password: "密码", question: "问题", file: "文件" };
+    return data.detail.map(function(e) {
+      const f = e.loc ? e.loc[e.loc.length - 1] : "";
+      return (map[f] || f) + "：" + (e.msg || "格式不正确");
+    }).join("；");
+  }
+  return "请求失败（" + JSON.stringify(data) + "）";
 }
 
 function refreshAuthUI() {
   if (token) {
-    document.getElementById("login-panel").classList.add("hidden");
-    document.getElementById("workspace").classList.remove("hidden");
-    document.getElementById("auth-user").textContent = username;
-    document.getElementById("btn-logout").classList.remove("hidden");
+    $("login-panel").classList.add("hidden");
+    $("workspace").classList.remove("hidden");
+    $("auth-user").textContent = username;
+    $("btn-logout").classList.remove("hidden");
+    loadRuns();
   } else {
-    document.getElementById("login-panel").classList.remove("hidden");
-    document.getElementById("workspace").classList.add("hidden");
-    document.getElementById("auth-user").textContent = "";
-    document.getElementById("btn-logout").classList.add("hidden");
+    $("login-panel").classList.remove("hidden");
+    $("workspace").classList.add("hidden");
+    $("auth-user").textContent = "";
+    $("btn-logout").classList.add("hidden");
   }
 }
 
@@ -114,96 +145,110 @@ function logout() {
   refreshAuthUI();
 }
 
-async function login() {
-  const u = document.getElementById("login-username").value.trim();
-  const p = document.getElementById("login-password").value;
-  const resp = await fetch(BASE + "/auth/login", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: u, password: p })
-  });
-  const data = await resp.json();
-  if (resp.ok) {
-    token = data.token; username = data.username;
-    localStorage.setItem("kb_token", token); localStorage.setItem("kb_user", username);
-    document.getElementById("login-msg").textContent = "";
-    refreshAuthUI();
-  } else {
-    document.getElementById("login-msg").textContent = data.detail || "登录失败";
-  }
+async function doLogin() {
+  const u = $("login-username").value.trim();
+  const p = $("login-password").value;
+  if (!u || !p) { $("login-msg").className = "msg err"; $("login-msg").textContent = "请输入用户名和密码"; return; }
+  try {
+    const resp = await fetch(BASE + "/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const data = await resp.json();
+    if (resp.ok) { onAuthSuccess(data); }
+    else { $("login-msg").className = "msg err"; $("login-msg").textContent = formatError(data); }
+  } catch (e) { $("login-msg").className = "msg err"; $("login-msg").textContent = "网络错误：" + e.message; }
 }
 
-async function register() {
-  const u = document.getElementById("login-username").value.trim();
-  const p = document.getElementById("login-password").value;
-  const resp = await fetch(BASE + "/auth/register", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: u, password: p })
-  });
-  const data = await resp.json();
-  if (resp.ok) {
-    token = data.token; username = data.username;
-    localStorage.setItem("kb_token", token); localStorage.setItem("kb_user", username);
-    document.getElementById("login-msg").textContent = "";
-    refreshAuthUI();
-  } else {
-    document.getElementById("login-msg").textContent = data.detail || "注册失败";
-  }
+async function doRegister() {
+  const u = $("login-username").value.trim();
+  const p = $("login-password").value;
+  const msg = $("login-msg");
+  if (u.length < 3) { msg.className = "msg err"; msg.textContent = "用户名至少 3 位"; return; }
+  if (p.length < 6) { msg.className = "msg err"; msg.textContent = "密码至少 6 位"; return; }
+  try {
+    const resp = await fetch(BASE + "/auth/register", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const data = await resp.json();
+    if (resp.ok) { onAuthSuccess(data); }
+    else { msg.className = "msg err"; msg.textContent = formatError(data); }
+  } catch (e) { msg.className = "msg err"; msg.textContent = "网络错误：" + e.message; }
+}
+
+function onAuthSuccess(data) {
+  token = data.token; username = data.username;
+  localStorage.setItem("kb_token", token); localStorage.setItem("kb_user", username);
+  $("login-msg").textContent = "";
+  refreshAuthUI();
+}
+
+function handle401(resp) {
+  if (resp.status === 401) { logout(); $("login-msg").className = "msg err"; $("login-msg").textContent = "登录已失效，请重新登录"; return true; }
+  return false;
 }
 
 async function uploadDoc() {
-  const f = document.getElementById("file-input").files[0];
-  if (!f) { document.getElementById("upload-msg").textContent = "请先选择文件"; return; }
+  const f = $("file-input").files[0];
+  const m = $("upload-msg");
+  if (!f) { m.className = "msg err"; m.textContent = "请先选择文件"; return; }
   const fd = new FormData(); fd.append("file", f);
-  const resp = await fetch(BASE + "/upload", { method: "POST", headers: authHeaders(), body: fd });
-  const data = await resp.json();
-  document.getElementById("upload-msg").textContent = resp.ok
-    ? ("已入库：" + data.filename + "（" + data.chunk_count + " 个片段）")
-    : (data.detail || "上传失败");
+  m.className = "msg"; m.textContent = "上传中（首次可能较慢）...";
+  try {
+    const resp = await fetch(BASE + "/upload", { method: "POST", headers: authHeaders(), body: fd });
+    if (handle401(resp)) return;
+    const data = await resp.json();
+    if (resp.ok) { m.className = "msg ok"; m.textContent = "已入库：" + data.filename + "（" + data.chunk_count + " 个片段）"; }
+    else { m.className = "msg err"; m.textContent = formatError(data); }
+  } catch (e) { m.className = "msg err"; m.textContent = "网络错误：" + e.message; }
 }
 
 async function ask() {
-  const q = document.getElementById("question").value.trim();
+  const q = $("question").value.trim();
   if (!q) return;
-  const resp = await fetch(BASE + "/ask", {
-    method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ question: q, top_k: 3 })
-  });
-  const data = await resp.json();
-  const area = document.getElementById("answer-area");
-  if (!resp.ok) { area.innerHTML = '<div class="answer err">' + (data.detail || "出错") + '</div>'; return; }
-  let srcs = (data.sources || []).map(s => s.document_name + " (" + s.score.toFixed(3) + ")").join("、");
-  area.innerHTML =
-    '<div class="tag">' + data.mode + '</div>' +
-    '<div class="answer">' + escapeHtml(data.answer) + '</div>' +
-    '<div class="sources">引用来源：' + (srcs || "无") + '</div>';
-}
-
-function escapeHtml(s) {
-  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const area = $("answer-area");
+  area.innerHTML = '<div class="msg">思考中...</div>';
+  try {
+    const resp = await fetch(BASE + "/ask", {
+      method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ question: q, top_k: 3 })
+    });
+    if (handle401(resp)) return;
+    const data = await resp.json();
+    if (!resp.ok) { area.innerHTML = '<div class="answer err">' + formatError(data) + '</div>'; return; }
+    const srcs = (data.sources || []).map(function(s) { return s.document_name + " (" + s.score.toFixed(3) + ")"; }).join("、");
+    area.innerHTML = '<div class="tag">' + data.mode + '</div>' +
+      '<div class="answer">' + escapeHtml(data.answer) + '</div>' +
+      '<div class="sources">引用来源：' + (srcs || "无") + '</div>';
+  } catch (e) { area.innerHTML = '<div class="answer err">网络错误：' + e.message + '</div>'; }
 }
 
 async function runEval() {
-  const path = document.getElementById("test-set-path").value.trim();
-  const resp = await fetch(BASE + "/evaluation/run", {
-    method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ test_set_path: path, top_k: 3 })
-  });
-  const data = await resp.json();
-  if (!resp.ok) { document.getElementById("eval-metrics").innerHTML = '<div class="err">' + (data.detail || "评测失败") + '</div>'; return; }
-  renderMetrics(data);
-  loadRuns();
+  const path = $("test-set-path").value.trim();
+  $("eval-metrics").innerHTML = '<div class="msg">评测中（真实 LLM，可能需要几十秒）...</div>';
+  try {
+    const resp = await fetch(BASE + "/evaluation/run", {
+      method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ test_set_path: path, top_k: 3 })
+    });
+    if (handle401(resp)) return;
+    const data = await resp.json();
+    if (!resp.ok) { $("eval-metrics").innerHTML = '<div class="msg err">' + formatError(data) + '</div>'; return; }
+    renderMetrics(data);
+    loadRuns();
+  } catch (e) { $("eval-metrics").innerHTML = '<div class="msg err">网络错误：' + e.message + '</div>'; }
 }
 
+function pct(v) { return v == null ? "-" : (v * 100).toFixed(1) + "%"; }
+
 function renderMetrics(m) {
-  const pct = v => (v == null ? "-" : (v * 100).toFixed(1) + "%");
-  document.getElementById("eval-metrics").innerHTML =
-    '<div class="metrics">' +
+  $("eval-metrics").innerHTML = '<div class="metrics">' +
     metricCard("总题数", m.total) +
     metricCard("关键词命中", pct(m.keyword_accuracy)) +
     metricCard("来源准确", pct(m.source_accuracy)) +
     metricCard("拒答正确", pct(m.refusal_accuracy)) +
-    metricCard("综合准确", pct(m.overall_accuracy)) +
-    '</div>';
+    metricCard("综合准确", pct(m.overall_accuracy)) + '</div>';
 }
 
 function metricCard(lbl, val) {
@@ -211,22 +256,20 @@ function metricCard(lbl, val) {
 }
 
 async function loadRuns() {
-  const resp = await fetch(BASE + "/evaluation/runs", { headers: authHeaders() });
-  const rows = await resp.json();
-  if (!Array.isArray(rows) || rows.length === 0) {
-    document.getElementById("eval-runs").innerHTML = '<div class="msg">暂无评测历史</div>';
-    return;
-  }
-  let html = '<table><tr><th>时间</th><th>题数</th><th>关键词</th><th>来源</th><th>拒答</th><th>综合</th></tr>';
-  for (const r of rows) {
-    const m = r.metrics || {};
-    const pct = v => (v == null ? "-" : (v * 100).toFixed(1) + "%");
-    html += '<tr><td>' + (r.created_at || "").replace("T", " ").slice(0, 19) + '</td>' +
-      '<td>' + m.total + '</td><td>' + pct(m.keyword_accuracy) + '</td><td>' + pct(m.source_accuracy) + '</td>' +
-      '<td>' + pct(m.refusal_accuracy) + '</td><td>' + pct(m.overall_accuracy) + '</td></tr>';
-  }
-  html += '</table>';
-  document.getElementById("eval-runs").innerHTML = html;
+  try {
+    const resp = await fetch(BASE + "/evaluation/runs", { headers: authHeaders() });
+    if (handle401(resp)) return;
+    const rows = await resp.json();
+    if (!Array.isArray(rows) || rows.length === 0) { $("eval-runs").innerHTML = '<div class="msg">暂无评测历史</div>'; return; }
+    let html = '<table><tr><th>时间</th><th>题数</th><th>关键词</th><th>来源</th><th>拒答</th><th>综合</th></tr>';
+    for (const r of rows) {
+      const m = r.metrics || {};
+      html += '<tr><td>' + String(r.created_at || "").replace("T"," ").slice(0,19) + '</td>' +
+        '<td>' + m.total + '</td><td>' + pct(m.keyword_accuracy) + '</td><td>' + pct(m.source_accuracy) + '</td>' +
+        '<td>' + pct(m.refusal_accuracy) + '</td><td>' + pct(m.overall_accuracy) + '</td></tr>';
+    }
+    $("eval-runs").innerHTML = html + '</table>';
+  } catch (e) { $("eval-runs").innerHTML = '<div class="msg err">加载历史失败</div>'; }
 }
 
 refreshAuthUI();
