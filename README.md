@@ -28,13 +28,18 @@ FastAPI · RAG · Chroma · sentence-transformers(bge-small-zh) · Agent(ReAct) 
 
 ## 状态
 
-**V1 完成（P0 + P1）**，全部功能经真实环境（真实 Chroma + bge 模型 + DeepSeek）验证。
+**V1 完成（P0 + P1）+ V1.1 审计整改**。
+V1.1 做了一轮以实际执行为依据的审计与整改：修掉 16 项缺陷、把测试从脚本升级为
+**144 个 pytest 用例 + CI**、重建了被测试污染的语料库，并把评测语料扩到
+**6 个文档（含 2 个近邻干扰）**、测试集扩到 **47 题**。详见
+[docs/review-v1-audit.md](docs/review-v1-audit.md) 与 [docs/change-log.md](docs/change-log.md)。
 
 ## 快速开始
 
 ```powershell
-# 1. 配置（至少填 LLM_API_KEY 与 MYSQL_PASSWORD）
-copy .env.example .env
+# 1. 初始化配置（自动生成 .env 并写入随机 JWT_SECRET）
+.venv\Scripts\python scripts\init_env.py
+#    然后编辑 .env，至少填 LLM_API_KEY 与 MYSQL_PASSWORD
 
 # 2. 一键启动（自动建 venv、装依赖、起服务）
 start.bat
@@ -45,20 +50,40 @@ start.bat
 
 访问 http://127.0.0.1:8000/ ｜ Swagger：http://127.0.0.1:8000/docs
 
+## 常用脚本
+
+```powershell
+# 离线测试（约 3 秒，不需要 MySQL / 模型 / 外网）
+.venv\Scripts\python -m pytest
+
+# 重建知识库（清空污染语料，从 data/kb/ 灌入标准语料；自动备份）
+.venv\Scripts\python scripts\rebuild_kb.py --dry-run
+.venv\Scripts\python scripts\rebuild_kb.py
+
+# 真实环境端到端（会真实调用 LLM API 并写入 MySQL）
+$env:RUN_INTEGRATION=1; .venv\Scripts\python -m pytest tests\test_integration_real.py -v -s
+```
+
 ## 目录结构
 
 ```
 smart-kb-agent/
 ├── app/
-│   ├── api/          路由层（auth/upload/ask/documents/conversations/evaluation）
+│   ├── factory.py    应用工厂（create_app，测试 import 它不产生副作用）
+│   ├── main.py       入口：uvicorn app.main:app
+│   ├── api/          路由层（auth/upload/ask/documents/conversations/evaluation）+ 限流
 │   ├── services/     业务层（router/chat/rag/agent/ingestion/auth/conversation）
-│   ├── core/         能力组件（embedding/vector_store/llm_client/reranker/tools/prompt）
+│   ├── core/         能力组件（embedding/vector_store/llm_client/reranker/tools/prompt/hf_cache）
 │   ├── models/       MySQL DAO + Pydantic 模型
 │   ├── evaluation/   评测 runner
 │   └── utils/        解析/切分/日志/异常
+├── scripts/          init_env.py（初始化 .env）、rebuild_kb.py（重建知识库）
 ├── docs/             完整项目文档
-├── data/             运行时数据（文档、向量库、评测集）
-└── tests/            测试脚本
+├── data/
+│   ├── kb/           标准知识库语料（纳入版本管理，保证评测可复现）
+│   ├── evaluation/   评测测试集
+│   └── documents/    运行时上传落盘目录（gitignore）
+└── tests/            pytest 测试套件（conftest 提供全离线隔离）
 ```
 
 ## 文档
@@ -75,3 +100,4 @@ smart-kb-agent/
 | [docs/change-log.md](docs/change-log.md) | 变更记录与 V2 backlog |
 | [docs/retrospective.md](docs/retrospective.md) | 项目复盘 |
 | [docs/audit.md](docs/audit.md) | 复用审计报告 |
+| [docs/review-v1-audit.md](docs/review-v1-audit.md) | V1 代码审计与改进建议 |
