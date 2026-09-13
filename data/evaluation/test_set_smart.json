@@ -1,0 +1,47 @@
+[
+  {
+    "id": "q1",
+    "question": "出差住宿标准是多少？",
+    "answerable": true,
+    "expected_keywords": ["600", "450"],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "一线城市600元，其他城市450元",
+    "gold_evidence": "出差住宿标准：一线城市每晚不超过 600 元，其他城市不超过 450 元。"
+  },
+  {
+    "id": "q2",
+    "question": "年假有几天？",
+    "answerable": true,
+    "expected_keywords": ["5", "10"],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "入职满1年5天，满5年10天",
+    "gold_evidence": "年假：入职满 1 年享 5 天年假，满 5 年享 10 天年假。"
+  },
+  {
+    "id": "q3",
+    "question": "上班时间是几点到几点？",
+    "answerable": true,
+    "expected_keywords": ["9:00", "18:00"],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "9:00-18:00",
+    "gold_evidence": "上班时间：周一至周五 9:00-18:00。"
+  },
+  {
+    "id": "q4",
+    "question": "市内交通费怎么报销？",
+    "answerable": true,
+    "expected_keywords": ["实报实销"],
+    "expected_source_doc": "员工考勤制度.txt",
+    "reference": "凭票实报实销，单日上限100元",
+    "gold_evidence": "市内交通费：凭票实报实销，单日上限 100 元。"
+  },
+  {
+    "id": "q5",
+    "question": "公司年会抽奖的一等奖奖品是什么？",
+    "answerable": false,
+    "expected_keywords": [],
+    "expected_source_doc": "",
+    "reference": "知识库无此信息，应拒答",
+    "gold_evidence": ""
+  }
+]

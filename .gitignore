@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 环境与密钥
+.env
+
+# 数据与模型（保留 data/evaluation 下的测试集）
+data/documents/
+data/chroma_db/
+data/*.db
+*.db
+*.sqlite3
+
+# 日志
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
