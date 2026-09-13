@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
-from app.api.ratelimit import SlidingWindowLimiter
+from app.api.ratelimit import build_limiter
 from app.config import Settings, settings
 from app.core.embedding import get_embedding_provider
 from app.core.llm_client import get_llm_client
@@ -40,17 +40,32 @@ def build_container(cfg: Settings | None = None) -> SimpleNamespace:
     ingestion = IngestionService(
         embedder=embedder, vector_store=vector_store, db=db,
         documents_dir=cfg.documents_dir, chunk_size=cfg.chunk_size, chunk_overlap=cfg.chunk_overlap,
+        settings=cfg,
     )
     rag = RAGService(
         embedder=embedder, vector_store=vector_store, llm=llm, reranker=reranker,
         top_k=cfg.top_k, rerank_top_k=cfg.rerank_top_k, max_history_messages=cfg.max_history_messages,
+        min_score=cfg.min_score,
     )
     agent = AgentEngine(llm=llm, tools=build_tools(rag), rag=rag, max_iterations=cfg.agent_max_iterations)
     chat = ChatService(llm=llm)
     router = Router(llm=llm, enable_llm=cfg.router_enable_llm)
     conversation = ConversationService(db=db, router=router, chat=chat, rag=rag, agent=agent)
-    auth = AuthService(db=db, jwt_secret=cfg.jwt_secret, jwt_expire_minutes=cfg.jwt_expire_minutes)
-    auth_limiter = SlidingWindowLimiter(cfg.auth_rate_limit_per_minute)
+    auth = AuthService(
+        db=db,
+        jwt_secret=cfg.jwt_secret,
+        jwt_expire_minutes=cfg.jwt_expire_minutes,
+        default_tenant=cfg.default_tenant,
+        allow_self_register=cfg.allow_self_register,
+        bootstrap_admin_username=cfg.bootstrap_admin_username,
+    )
+    # 限流后端按配置选择：redis 优先，建连失败自动回退进程内实现
+    auth_limiter = build_limiter(
+        limit=cfg.auth_rate_limit_per_minute,
+        backend=cfg.rate_limit_backend,
+        redis_url=cfg.redis_url,
+        name="auth",
+    )
 
     return SimpleNamespace(
         settings=cfg, db=db, embedder=embedder, vector_store=vector_store, llm=llm,

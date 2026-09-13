@@ -82,8 +82,10 @@ smart-kb-agent/
 │   ├── core/         能力组件（embedding/vector_store/llm_client/reranker/tools/prompt/hf_cache）
 │   ├── models/       MySQL DAO + Pydantic 模型
 │   ├── evaluation/   评测 runner
-│   └── utils/        解析/切分/日志/异常
-├── scripts/          init_env.py（初始化 .env）、rebuild_kb.py（重建知识库）
+│   └── utils/        解析（PDF/Word/Excel/CSV/OCR）/切分/日志/异常
+├── mcp_server/       MCP server（把知识库暴露给 MCP 客户端，见其 README）
+├── migrations/       Alembic 数据库迁移
+├── scripts/          init_env · rebuild_kb · open_when_ready · run_evaluation · rerank_ab · benchmark · gen_corpus
 ├── docs/             完整项目文档
 ├── data/
 │   ├── kb/           标准知识库语料（纳入版本管理，保证评测可复现）
@@ -92,18 +94,38 @@ smart-kb-agent/
 └── tests/            pytest 测试套件（conftest 提供全离线隔离）
 ```
 
+## MCP 接入（可选）
+
+除 HTTP API 外，项目还可作为 **MCP server** 使用，让 Claude Desktop / Cursor 这类客户端直接调用知识库：
+
+```jsonc
+{
+  "mcpServers": {
+    "smart-kb-agent": {
+      "command": "D:\\Projects\\smart-kb-agent\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "mcp_server"],
+      "cwd": "D:\\Projects\\smart-kb-agent"
+    }
+  }
+}
+```
+
+暴露两个工具：`knowledge_search`（检索片段）与 `ask_knowledge_base`（问答 + 引用）。
+与主服务共用同一份 `.env` 与向量库；`ENABLE_MCP=false` 可关闭。详见 [mcp_server/README.md](mcp_server/README.md)。
+
 ## 文档
 
 | 文档 | 内容 |
 | --- | --- |
 | [docs/requirements.md](docs/requirements.md) | 需求规格 |
 | [docs/architecture.md](docs/architecture.md) | 架构设计 |
-| [docs/database-design.md](docs/database-design.md) | 数据库设计 |
+| [docs/database-design.md](docs/database-design.md) | 数据库设计（含 V2 多租户变更与迁移策略） |
 | [docs/api.md](docs/api.md) | API 契约 |
 | [docs/decisions.md](docs/decisions.md) | 架构决策（ADR） |
 | [docs/testing.md](docs/testing.md) | 测试方案与验证记录 |
-| [docs/deployment.md](docs/deployment.md) | 部署与排障 |
-| [docs/change-log.md](docs/change-log.md) | 变更记录与 V2 backlog |
+| [docs/deployment.md](docs/deployment.md) | 部署与排障（含 Alembic 迁移手册） |
+| [docs/change-log.md](docs/change-log.md) | 变更记录与 backlog |
+| [docs/v2-plan.md](docs/v2-plan.md) | V2 作战计划（角色分工 / 设计 / 验收标准） |
 | [docs/retrospective.md](docs/retrospective.md) | 项目复盘 |
 | [docs/audit.md](docs/audit.md) | 复用审计报告 |
 | [docs/review-v1-audit.md](docs/review-v1-audit.md) | V1 代码审计与改进建议 |

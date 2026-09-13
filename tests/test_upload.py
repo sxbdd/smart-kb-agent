@@ -39,7 +39,8 @@ def test_upload_docx(client, auth):
 
 
 def test_upload_unsupported_type_415(client, auth):
-    resp = _upload(client, auth, "表格.xlsx", b"binary-data")
+    # 2026-XX 起 .xlsx/.csv/图片 已支持，这里换一个仍然不支持的后缀（由 Role-P 通告 Lead）
+    resp = _upload(client, auth, "演示.pptx", b"binary-data")
     assert resp.status_code == 415
 
 
@@ -98,11 +99,12 @@ def test_filename_path_traversal_is_neutralised(client, auth, settings):
     assert list(docs_dir.glob("*evil.txt"))
 
 
-def test_delete_document(client, auth):
-    doc_id = _upload(client, auth, "待删.txt", POLICY.encode("utf-8")).json()["document_id"]
-    assert client.delete(f"/documents/{doc_id}", headers=auth).status_code == 200
-    assert client.get("/documents", headers=auth).json() == []
+def test_delete_document(client, admin_auth):
+    """删文档是 admin 专属动作（V2 角色矩阵，见 docs/v2-plan.md §6.2）。"""
+    doc_id = _upload(client, admin_auth, "待删.txt", POLICY.encode("utf-8")).json()["document_id"]
+    assert client.delete(f"/documents/{doc_id}", headers=admin_auth).status_code == 200
+    assert client.get("/documents", headers=admin_auth).json() == []
 
 
-def test_delete_unknown_document_404(client, auth):
-    assert client.delete("/documents/nope", headers=auth).status_code == 404
+def test_delete_unknown_document_404(client, admin_auth):
+    assert client.delete("/documents/nope", headers=admin_auth).status_code == 404

@@ -52,6 +52,16 @@ def _bool(key: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _float(key: str, default: float) -> float:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = field(default_factory=lambda: _env("APP_NAME", "企业级 RAG + Agent 智能知识库系统"))
@@ -113,6 +123,34 @@ class Settings:
 
     # Router：规则判不出时是否调用 LLM 分类（默认关，省调用）
     router_enable_llm: bool = field(default_factory=lambda: _bool("ROUTER_ENABLE_LLM", False))
+
+    # ---------------- V2 ----------------
+    # 文档解析扩展：Excel / CSV / OCR（扫描件）
+    enable_ocr: bool = field(default_factory=lambda: _bool("ENABLE_OCR", False))
+    ocr_provider: str = field(default_factory=lambda: _env("OCR_PROVIDER", "fake"))  # rapidocr | fake | none
+    ocr_lang: str = field(default_factory=lambda: _env("OCR_LANG", "ch"))
+    ocr_min_chars: int = field(default_factory=lambda: _int("OCR_MIN_CHARS", 20))
+
+    # 流式输出（SSE）
+    enable_stream: bool = field(default_factory=lambda: _bool("ENABLE_STREAM", True))
+    stream_timeout_s: int = field(default_factory=lambda: _int("STREAM_TIMEOUT_S", 180))
+
+    # 检索相似度阈值：0 表示不启用（保持 V1 行为）
+    min_score: float = field(default_factory=lambda: _float("MIN_SCORE", 0.0))
+
+    # 限流后端：memory（进程内）| redis（跨副本共享，不可用时回退 memory）
+    rate_limit_backend: str = field(default_factory=lambda: _env("RATE_LIMIT_BACKEND", "memory"))
+    redis_url: str = field(default_factory=lambda: _env("REDIS_URL", "redis://127.0.0.1:6379/0"))
+
+    # 多租户与 RBAC
+    default_tenant: str = field(default_factory=lambda: _env("DEFAULT_TENANT", "default"))
+    allow_self_register: bool = field(default_factory=lambda: _bool("ALLOW_SELF_REGISTER", True))
+    # 指定该用户名在首次注册时自动成为所在租户的管理员（留空则不设）
+    bootstrap_admin_username: str = field(default_factory=lambda: _env("BOOTSTRAP_ADMIN_USERNAME", ""))
+
+    # MCP server（把知识库暴露给支持 MCP 的客户端）
+    enable_mcp: bool = field(default_factory=lambda: _bool("ENABLE_MCP", True))
+    mcp_server_name: str = field(default_factory=lambda: _env("MCP_SERVER_NAME", "smart-kb-agent"))
 
     @property
     def max_upload_bytes(self) -> int:

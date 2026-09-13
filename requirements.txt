@@ -18,8 +18,17 @@ sentence-transformers>=3.0
 # Database
 pymysql>=1.1
 
+# Schema migrations (V2)
+alembic>=1.13
+
+# Shared rate-limit backend (V2); falls back to in-process when unavailable
+redis>=5.0
+
 # Auth
 PyJWT>=2.8
+
+# Document parsing extension (V2): Excel workbooks
+openpyxl>=3.1
 
 # NOTE: keep this file ASCII-only. pip-audit (pip_requirements_parser) decodes
 # BOM-less files with the locale codec -- cp936 on a zh-CN Windows -- so non-ASCII

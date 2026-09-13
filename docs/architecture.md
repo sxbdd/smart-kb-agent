@@ -95,3 +95,44 @@ Prompt 强制"只根据提供的文档回答，无相关内容则拒答"，并�
 | 暴力破解与 CPU 放大 | `/auth/*` 按 IP 滑动窗口限流（进程内，多副本需换共享存储） |
 | XSS | 前端 `marked.parse` 结果经本地 DOMPurify 消毒后再入 DOM |
 | 冷启动依赖外网 | `app/core/hf_cache.py`：模型已缓存则自动离线加载 |
+
+## 8. V2 增量（多入口 + 解析扩展 + 多租户）
+
+V2 在保持 V1 分层不变的前提下，向外扩了三类能力：**多入口**、**解析覆盖**、**隔离与治理**。
+
+### 8.1 多入口
+
+```
+                    ┌─ HTTP API（FastAPI）      ← 浏览器 / 脚本
+知识库能力 ─────────┼─ MCP server（stdio）      ← Claude Desktop / Cursor
+                    └─ Agent 工具（knowledge_search）← 内部 ReAct 循环
+```
+
+- `mcp_server/`：把同一套 `container.rag` 暴露成 MCP 工具（`knowledge_search` / `ask_knowledge_base`），
+  **零业务重复实现** —— 直接复用容器，因此自动继承 `MIN_SCORE`、限流后端等全部配置。
+  容器**惰性构建**：`import mcp_server` 不会加载模型或连库。
+- 三者共用一份 `.env` 与向量库，行为一致。
+
+### 8.2 解析覆盖（`app/utils/document_parser.py` + `app/utils/ocr.py`）
+
+| 类型 | 处理 |
+| --- | --- |
+| PDF / DOCX / TXT / MD | V1 已有 |
+| **XLSX / XLSM** | openpyxl `read_only`，按 sheet 输出 `【sheet名】` + 行内 `" \| "` 连接 |
+| **CSV** | 编码回退链 + 分隔符嗅探（含全角 `；` 兜底） |
+| **图片（PNG/JPG/…）** | 走 OCR |
+| **扫描件 PDF** | 文本层稀疏（`< OCR_MIN_CHARS`）且 `ENABLE_OCR=true` 时渲染 + OCR |
+
+- OCR 是**插件化**的：`OcrEngine` 协议 + `Fake`（离线测试）/ `RapidOcr`（可选依赖，惰性加载）/ `Noop`；
+- **硬保证**：普通文本 PDF 绝不受 OCR 可用性影响；引擎缺失时报清晰的 `AppError` 并给出安装命令。
+
+### 8.3 隔离与治理
+
+| 能力 | 实现 |
+| --- | --- |
+| 多租户 | `tenant_id` 落在用户/文档/会话/评测 + **向量 chunk 的 metadata**，检索时 `where={"tenant_id": …}` 过滤（最易漏的一环） |
+| RBAC | `viewer` / `user` / `admin` 三角色，`require_role()` 依赖统一拦截 |
+| 检索阈值 | `MIN_SCORE`（0 = 关闭，保持 V1 行为）；过滤发生在 `VectorStore.query` |
+| 限流后端 | `memory`（默认）/ `redis`（跨副本共享，不可用自动回退） |
+| 结构演进 | Alembic 迁移（`migrations/`），存量库先 `stamp 0001_initial` 再升级 |
+| 流式输出 | `POST /ask/stream`（SSE：`meta → delta* → sources → done`，异常发 `error` 不断流） |

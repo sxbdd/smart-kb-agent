@@ -84,12 +84,14 @@ start.bat
 
 | 限制 | 说明 |
 | --- | --- |
-| 限流是**进程内**实现 | 多副本部署时各副本独立计数，需要换成 Redis 等共享存储 |
-| 单租户 | 所有登录用户共享同一知识库；路由里的 `user_id` 只用于鉴权，不做数据隔离（ADR-009） |
-| 无迁移工具 | 建表用 `CREATE TABLE IF NOT EXISTS`，加字段需手工处理或引入 Alembic |
+| 限流默认仍是**进程内**实现 | 默认 `RATE_LIMIT_BACKEND=memory`，多副本各算各的。**V2 已支持 `redis` 后端**：设 `RATE_LIMIT_BACKEND=redis` + `REDIS_URL`，Redis 不可用时自动回退进程内并告警，服务不会因 Redis 挂了而启动失败 |
+| 存量库升级必须先 stamp | 旧库由 `CREATE TABLE IF NOT EXISTS` 建，可能缺 `fk_messages_conversation`，直接 `alembic upgrade head` 会失败。存量库请先 `alembic stamp 0001_initial` 再执行 `0002_multi_tenant`；全新建库直接 `upgrade head` |
+| 多租户隔离为**演示级准入** | V2 已实现隔离强制点（DAO 全部带 `tenant_id` + 向量库按 metadata 过滤 + RBAC 三角色），但"用户属于哪个租户"由**注册时传 `tenant` 字段**决定（默认 `DEFAULT_TENANT`）。生产应由邀请码 / SSO / 组织关系决定（ADR-009 的定位已被 V2 取代） |
+| 升级后 Chroma 老数据**检索不到** | V1 时期灌入的 chunk 没有 `tenant_id` 字段，而 Chroma 的 `where` 对"缺字段"的记录天然不匹配（且 `query` 不支持 `$exists`，实测报错）。这是 **fail-closed**（宁可查不到也不跨租户泄漏），但**升级后必须用 `rebuild_kb.py` 重灌一次索引**，否则带租户检索会返回空 |
 | 并发能力有限 | 实测 4 并发后吞吐见顶（约 144 QPS），延迟随并发线性上涨；瓶颈是 CPU 上的查询向量化 |
 | `chromadb` 有 5 个未修复漏洞 | `pip-audit` 报出且上游无修复版本；CI 的生产依赖集审计仅提示不阻断 |
 | Rerank 默认关闭 | 实测 Recall@3 两组均 100%，首命中 +2.6pp 但延迟 133× → 维持关闭（ADR-011）；需要时设 `ENABLE_RERANK=true` |
+| OCR 需要可选依赖 | `pymupdf`（PDF 转图片）+ `rapidocr-onnxruntime`（本地 OCR），未安装时**不影响文本 PDF**，只在遇到扫描件/图片时报清晰错误 |
 
 ## 8. 运维脚本速查
 
@@ -101,3 +103,71 @@ start.bat
 | `scripts/run_evaluation.py` | 跑评测（`--repeat` 看稳定性、`--details` 看逐题） | **是** |
 | `scripts/rerank_ab.py` | Rerank A/B：排序质量 + 延迟 | 否 |
 | `scripts/benchmark.py` | 检索/并发性能基准（`--with-llm` 才测问答） | 否（默认） |
+| `scripts/gen_corpus.py` | 生成压测/干扰语料（`--docs N --include-base`，固定种子可复现） | 否 |
+| `scripts/verify_tenancy.py` | **V2 多租户真机验收**：临时库迁移往返 / 真实库升级校验 / 真实 Chroma 隔离 / 真实 HTTP 角色矩阵 | 否 |
+
+## 9. 数据库迁移（Alembic）
+
+```powershell
+# 全新库：直接建到最新
+.venv\Scripts\python -m alembic upgrade head
+
+# 存量库（V1 升级上来）：先标记基线，再升级
+.venv\Scripts\python -m alembic stamp 0001_initial
+.venv\Scripts\python -m alembic upgrade head
+
+# 查看/回滚
+.venv\Scripts\python -m alembic current
+.venv\Scripts\python -m alembic downgrade -1
+
+# 离线查看将要执行的 SQL（不连库）
+.venv\Scripts\python -m alembic upgrade head --sql
+```
+
+| 版本 | 内容 |
+| --- | --- |
+| `0001_initial` | 5 张表，与 `app/models/database.py` 的 `SCHEMA` 完全一致（含外键与索引） |
+| `0002_multi_tenant` | 多租户与角色：新增 `tenant_id` / `role` 列与索引，`uk_username` → `uk_tenant_username`，补 `fk_messages_conversation` |
+
+> 注意：`alembic.ini` **必须保持 ASCII-only** —— alembic 用本地代码页（zh-CN 下 cp936）读 ini，
+> 中文注释会直接抛 `UnicodeDecodeError`（与 requirements 文件同一个坑）。
+
+### 9.1 存量库升级后的两件必做事（少一件服务就不可用）
+
+`0002_multi_tenant` 只改表结构，**不会**替你处理下面两件事：
+
+**① 提升一个管理员。** 迁移把 `role` 的默认值定为 `user`，所以升级完**没有任何 admin**，
+而删文档 / 跑评测 / 用户管理都要求 admin：
+
+```sql
+-- 二选一：把已有账号提成 admin
+UPDATE users SET role = 'admin' WHERE username = '<你的账号>' AND tenant_id = 'default';
+-- 或者：在 .env 里设 BOOTSTRAP_ADMIN_USERNAME=<用户名>，然后用该用户名注册一个新账号
+```
+
+**② 重灌一次向量库。** V1 时期灌进 Chroma 的 chunk **没有 `tenant_id` metadata**，
+而 `ChromaVectorStore.query(..., tenant_id=...)` 会加 `where={"tenant_id": ...}` ——
+缺字段的老数据**永远匹配不上**（`where` 不支持 `$exists`，Chroma 实测直接报错，
+所以"缺字段视为 default"这条兼容只能在内存实现里做）。不重灌的表现是**检索结果为空**：
+
+```powershell
+.venv\Scripts\python scripts\rebuild_kb.py --yes    # 会先备份到 data/backups/
+```
+
+### 9.2 升级后自检（真机验收）
+
+```powershell
+.venv\Scripts\python scripts\verify_tenancy.py --part all
+```
+
+四个部分各自可单独跑，全部成功才返回 0：
+
+| 部分 | 验证内容 |
+| --- | --- |
+| `temp-db` | 在临时库跑 `0001 → 0002 → base` 往返，用 `information_schema` 校验列 / 索引 / 唯一键 / 外键 |
+| `upgrade` | **真实库**：先逻辑备份 → `stamp` → `upgrade` → 校验结构、存量数据零丢失、重复 upgrade 幂等 |
+| `chroma` | 真实 Chroma 双租户隔离（含"缺 `tenant_id` 老数据不可见"这条已知偏差的固化断言） |
+| `api` | 临时库 + 真实 Chroma 上跑真实 HTTP 角色矩阵与跨租户隔离 |
+
+> 本机实测（2026-09-14）：四部分共 **65 项断言全部通过**，升级前后行数不变
+> （users 4 / documents 6 / conversations 6 / messages 14 / evaluation_runs 6）。

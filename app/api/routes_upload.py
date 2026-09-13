@@ -6,11 +6,15 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 
-from app.api.deps import get_current_user
+from app.api.deps import require_role
 from app.models.schemas import DocumentUploadResponse
+from app.services.tenancy import ROLE_ADMIN, ROLE_USER, Principal
 from app.utils.exceptions import AppError
 
 router = APIRouter(tags=["文档管理"])
+
+#: 上传是写操作：viewer 只能读（403），user / admin 可上传（见 docs/v2-plan.md §6.2）
+require_uploader = require_role(ROLE_USER, ROLE_ADMIN)
 
 
 @router.post(
@@ -23,7 +27,7 @@ router = APIRouter(tags=["文档管理"])
 async def upload(
     request: Request,
     file: UploadFile = File(..., description="要上传的文档文件"),
-    user_id: int = Depends(get_current_user),
+    principal: Principal = Depends(require_uploader),
 ) -> DocumentUploadResponse:
     app = request.app
     safe_name = Path(file.filename or "document.txt").name
@@ -49,7 +53,9 @@ async def upload(
                 out.write(chunk)
         if written == 0:
             raise AppError("上传文件为空", 400)
-        return app.state.container.ingestion.ingest(str(dest), safe_name)
+        # 租户维度随文件一起下传：metadata 与 documents 表都按它落库（隔离强制点在服务层 / DAO）
+        return app.state.container.ingestion.ingest(str(dest), safe_name, tenant_id=principal.tenant_id)
     except Exception:
+        # 上传/入库失败就清掉半截文件，不在磁盘留下无人认领的残留
         dest.unlink(missing_ok=True)
         raise

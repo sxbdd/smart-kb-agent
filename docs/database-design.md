@@ -2,12 +2,27 @@
 
 > 数据库：MySQL 8（InnoDB / utf8mb4）
 > 建表 SQL 的唯一来源：`app/models/database.py` 的 `SCHEMA`
+> **V2 起，存量库的结构变更由 Alembic 迁移负责**（`migrations/`），`SCHEMA` 只用于全新建库。
+
+## 0. 存量库实测（2026-09-14，V2 升级前）
+
+```
+表: conversations / documents / evaluation_runs / messages / users
+users.username   key=UNI     ← V1 的全局唯一索引
+messages         key=MUL     ← 只有普通索引
+外键: 空                     ← SCHEMA 里的 fk_messages_conversation 从未落到存量表
+行数: users=4 / documents=6 / conversations=6 / messages=14 / evaluation_runs=6
+```
+
+**为什么必须上 Alembic**：建表用的是 `CREATE TABLE IF NOT EXISTS`，表已存在时**整条语句被跳过**，
+所以后续对 `SCHEMA` 的任何修改（例如加外键、加 `tenant_id`）都不会自动生效 ——
+这正是上面"外键为空"的原因。V2 用迁移补上这部分。
 
 ## 1. 设计原则
 
 - 每张表都解释"为什么这样设计"；
 - 每个索引都解释"为哪个查询而建"；
-- V1 单租户，不做组织/租户隔离（登记 V2）。
+- V1 单租户；**V2 引入 `tenant_id` 多租户隔离与 `role` 角色权限**（见 §7）。
 
 ## 2. ER 关系
 
@@ -95,3 +110,36 @@ evaluation_runs（独立）
 - MySQL 只存**元数据**，chunk 的 metadata 里带 `document_id` 关联回 MySQL；
 - 删除文档时：先删 Chroma 向量，再删 MySQL 元数据；
 - 重建知识库：`scripts/rebuild_kb.py`（清空向量库集合 + `documents` 表，再灌入 `data/kb/` 语料，执行前自动备份）。
+
+## 7. V2 变更：多租户隔离与角色
+
+### 7.1 列变更
+
+| 表 | 新增列 | 说明 |
+| --- | --- | --- |
+| `users` | `tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'`、`role VARCHAR(20) NOT NULL DEFAULT 'user'` | 租户归属与角色（`viewer`/`user`/`admin`） |
+| `documents` | `tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'` | 文档按租户隔离 |
+| `conversations` | `tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'` | 会话按租户隔离 |
+| `evaluation_runs` | `tenant_id VARCHAR(64) NOT NULL DEFAULT 'default'` | 评测结果按租户隔离 |
+| `messages` | 无 | 通过所属会话间接隔离 |
+
+### 7.2 索引与唯一键变更
+
+| 变更 | 为什么 |
+| --- | --- |
+| `users`：`uk_username(username)` → **`uk_tenant_username(tenant_id, username)`** | 不同租户允许同名用户 |
+| 新增 `idx_users_tenant(tenant_id)` | 按租户列用户（`/admin/users`） |
+| 新增 `idx_documents_tenant(tenant_id)` | 按租户列文档（每次 `/documents` 都命中） |
+| 新增 `idx_conversations_tenant(tenant_id)` | 按租户列会话 |
+| 新增 `idx_evaluation_runs_tenant(tenant_id)` | 按租户列评测历史 |
+| **补上** `fk_messages_conversation … ON DELETE CASCADE` | 存量库从未生效（见 §0）；应用层虽已先删消息，但外键是最后一道防线 |
+
+### 7.3 迁移策略
+
+1. `0001_initial`：**全新建库**用，建表与 `SCHEMA` 完全一致（含外键与索引）；
+2. `0002_multi_tenant`：**存量升级**用，执行 §7.1/§7.2 的全部 ALTER；
+   所有新增列都带 `DEFAULT`，因此**现有数据自动归入 `default` 租户、角色为 `user`**，升级零停机；
+3. 回滚：`0002` 的 `downgrade()` 删除新增列与索引并还原 `uk_username`（要求租户内用户名不冲突）。
+
+> 注：向量库侧的隔离靠 chunk metadata 里的 `tenant_id` + 查询时 `where={"tenant_id": ...}` 过滤，
+> 不是靠 MySQL —— 这是多租户 RAG 最容易漏的一条，见 `docs/v2-plan.md` §6.3。

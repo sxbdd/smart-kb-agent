@@ -33,16 +33,41 @@ class DocumentInfo(BaseModel):
 class RegisterRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50, description="用户名")
     password: str = Field(min_length=6, max_length=64, description="密码")
+    # 演示级租户准入：注册时声明所属租户，缺省落到 DEFAULT_TENANT。
+    # 生产应由邀请码 / SSO / 组织关系决定（见 docs/v2-plan.md §6.5）。
+    tenant: Optional[str] = Field(default=None, max_length=64, description="租户标识，缺省为默认租户")
 
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, description="用户名")
     password: str = Field(min_length=1, description="密码")
+    tenant: Optional[str] = Field(default=None, max_length=64, description="租户标识，缺省为默认租户")
 
 
 class AuthResponse(BaseModel):
     token: str = Field(description="访问令牌（JWT）")
     username: str = Field(description="用户名")
+    role: str = Field(default="user", description="角色：viewer / user / admin")
+    tenant_id: str = Field(default="default", description="所属租户")
+
+
+class UserInfo(BaseModel):
+    """租户内用户条目（`GET /admin/users`）。"""
+
+    user_id: int = Field(description="用户 ID")
+    username: str = Field(description="用户名")
+    role: str = Field(description="角色：viewer / user / admin")
+    tenant_id: str = Field(description="所属租户")
+    created_at: Optional[str] = Field(default=None, description="创建时间")
+
+
+class CreateUserRequest(BaseModel):
+    """admin 代建账号（自助注册关闭时使用）。"""
+
+    username: str = Field(min_length=3, max_length=50, description="用户名")
+    password: str = Field(min_length=6, max_length=64, description="密码")
+    role: str = Field(default="user", description="角色：viewer / user / admin")
+    tenant: Optional[str] = Field(default=None, max_length=64, description="租户，缺省为调用者所在租户")
 
 
 class AskRequest(BaseModel):

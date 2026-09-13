@@ -1,4 +1,16 @@
-"""MySQL 数据访问：users / documents / conversations / messages / evaluation_runs。"""
+"""MySQL 数据访问：users / documents / conversations / messages / evaluation_runs。
+
+V2 多租户改造（见 `docs/v2-plan.md` §6）：
+
+- **隔离强制点在 DAO**：所有读写方法都带 `tenant_id`，SQL 里必须出现 `tenant_id = %s`。
+  禁止"先查出来再在服务层判断归属"——那种写法漏一处就是跨租户数据泄漏。
+- `users` 的唯一键从 `uk_username(username)` 改为 **`uk_tenant_username(tenant_id, username)`**：
+  不同租户可以重名。
+- `messages` 表**不加** `tenant_id`：消息归属由会话决定，会话已按租户隔离。
+
+存量库注意：`CREATE TABLE IF NOT EXISTS` **不会**改动已存在的表，因此老库必须走
+Alembic `0002_multi_tenant`（见 `docs/deployment.md`），不能指望这里的 `init()` 补列。
+"""
 from __future__ import annotations
 
 import json
@@ -14,9 +26,11 @@ CREATE TABLE IF NOT EXISTS users (
     id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     username      VARCHAR(50) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    tenant_id     VARCHAR(64) NOT NULL DEFAULT 'default',
+    role          VARCHAR(16) NOT NULL DEFAULT 'user',
     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_username (username)
+    UNIQUE KEY uk_tenant_username (tenant_id, username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -25,16 +39,20 @@ CREATE TABLE IF NOT EXISTS documents (
     file_type    VARCHAR(20) NOT NULL,
     file_size    BIGINT NOT NULL,
     chunk_count  INT NOT NULL,
+    tenant_id    VARCHAR(64) NOT NULL DEFAULT 'default',
     uploaded_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    KEY idx_documents_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档元数据';
 
 CREATE TABLE IF NOT EXISTS conversations (
     id         VARCHAR(64) NOT NULL,
     title      VARCHAR(255) NOT NULL DEFAULT '',
+    tenant_id  VARCHAR(64) NOT NULL DEFAULT 'default',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    KEY idx_conversations_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话';
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -53,10 +71,15 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS evaluation_runs (
     id         VARCHAR(64) NOT NULL,
     metrics    JSON NOT NULL,
+    tenant_id  VARCHAR(64) NOT NULL DEFAULT 'default',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    KEY idx_evaluation_runs_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='评测记录';
 """
+
+#: 老数据（升级前写入、没有 tenant_id 字段）统一归到这个租户
+DEFAULT_TENANT = "default"
 
 
 def _new_id() -> str:
@@ -98,102 +121,167 @@ class Database:
                         cur.execute(stmt)
 
     # ---- users ----
-    def create_user(self, username: str, password_hash: str) -> int:
+    def create_user(
+        self,
+        username: str,
+        password_hash: str,
+        tenant_id: str = DEFAULT_TENANT,
+        role: str = "user",
+    ) -> int:
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO users(username, password_hash) VALUES(%s, %s)",
-                    (username, password_hash),
+                    "INSERT INTO users(username, password_hash, tenant_id, role) VALUES(%s, %s, %s, %s)",
+                    (username, password_hash, tenant_id, role),
                 )
                 return cur.lastrowid
 
-    def get_user_by_username(self, username: str) -> Optional[dict[str, Any]]:
+    def get_user_by_username(self, username: str, tenant_id: str = DEFAULT_TENANT) -> Optional[dict[str, Any]]:
+        """按「租户 + 用户名」查用户——同一租户内用户名唯一，跨租户可重名。"""
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+                cur.execute(
+                    "SELECT * FROM users WHERE username = %s AND tenant_id = %s",
+                    (username, tenant_id),
+                )
                 return cur.fetchone()
 
     def get_user_by_id(self, user_id: int) -> Optional[dict[str, Any]]:
+        """主键查询（唯一），返回行内含 tenant_id / role。"""
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
                 cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
                 return cur.fetchone()
 
-    # ---- documents ----
-    def save_document(self, doc_id: str, filename: str, file_type: str, file_size: int, chunk_count: int) -> None:
+    def list_users(self, tenant_id: str = DEFAULT_TENANT) -> list[dict[str, Any]]:
+        """列出**本租户**用户（供 `GET /admin/users`）。
+
+        返回键名与 `app/models/schemas.py::UserInfo` 对齐，`created_at` 统一转成字符串
+        （与 `get_conversation()` 的处理方式一致，避免路由层各写一遍格式化）。
+        """
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO documents(id, filename, file_type, file_size, chunk_count) "
-                    "VALUES(%s, %s, %s, %s, %s)",
-                    (doc_id, filename, file_type, file_size, chunk_count),
+                    "SELECT id, username, role, tenant_id, created_at FROM users "
+                    "WHERE tenant_id = %s ORDER BY id ASC",
+                    (tenant_id,),
+                )
+                rows = cur.fetchall()
+        return [
+            {
+                "user_id": int(r["id"]),
+                "username": r["username"],
+                "role": r["role"],
+                "tenant_id": r["tenant_id"],
+                "created_at": str(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    # ---- documents ----
+    def save_document(
+        self,
+        doc_id: str,
+        filename: str,
+        file_type: str,
+        file_size: int,
+        chunk_count: int,
+        tenant_id: str = DEFAULT_TENANT,
+    ) -> None:
+        with self._lock:
+            conn = self._ensure_conn()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO documents(id, filename, file_type, file_size, chunk_count, tenant_id) "
+                    "VALUES(%s, %s, %s, %s, %s, %s)",
+                    (doc_id, filename, file_type, file_size, chunk_count, tenant_id),
                 )
 
-    def list_documents(self) -> list[dict[str, Any]]:
+    def list_documents(self, tenant_id: str = DEFAULT_TENANT) -> list[dict[str, Any]]:
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM documents ORDER BY uploaded_at DESC")
+                cur.execute(
+                    "SELECT * FROM documents WHERE tenant_id = %s ORDER BY uploaded_at DESC",
+                    (tenant_id,),
+                )
                 return cur.fetchall()
 
-    def get_document(self, doc_id: str) -> Optional[dict[str, Any]]:
+    def get_document(self, doc_id: str, tenant_id: str = DEFAULT_TENANT) -> Optional[dict[str, Any]]:
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM documents WHERE id = %s", (doc_id,))
+                cur.execute(
+                    "SELECT * FROM documents WHERE id = %s AND tenant_id = %s",
+                    (doc_id, tenant_id),
+                )
                 return cur.fetchone()
 
-    def delete_document(self, doc_id: str) -> None:
+    def delete_document(self, doc_id: str, tenant_id: str = DEFAULT_TENANT) -> None:
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
+                cur.execute(
+                    "DELETE FROM documents WHERE id = %s AND tenant_id = %s",
+                    (doc_id, tenant_id),
+                )
 
-    def delete_all_documents(self) -> int:
-        """清空文档元数据表（重建知识库时使用），返回删除行数。"""
+    def delete_all_documents(self, tenant_id: str = DEFAULT_TENANT) -> int:
+        """清空**本租户**的文档元数据（重建知识库时使用），返回删除行数。"""
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM documents")
+                cur.execute("DELETE FROM documents WHERE tenant_id = %s", (tenant_id,))
                 return cur.rowcount
 
     # ---- conversations ----
-    def create_conversation(self, title: str = "") -> str:
+    def create_conversation(self, title: str = "", tenant_id: str = DEFAULT_TENANT) -> str:
         conv_id = _new_id()
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("INSERT INTO conversations(id, title) VALUES(%s, %s)", (conv_id, title or ""))
+                cur.execute(
+                    "INSERT INTO conversations(id, title, tenant_id) VALUES(%s, %s, %s)",
+                    (conv_id, title or "", tenant_id),
+                )
         return conv_id
 
-    def set_conversation_title(self, conv_id: str, title: str) -> None:
+    def set_conversation_title(self, conv_id: str, title: str, tenant_id: str = DEFAULT_TENANT) -> None:
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("UPDATE conversations SET title = %s WHERE id = %s", (title, conv_id))
+                cur.execute(
+                    "UPDATE conversations SET title = %s WHERE id = %s AND tenant_id = %s",
+                    (title, conv_id, tenant_id),
+                )
 
-    def list_conversations(self) -> list[dict[str, Any]]:
+    def list_conversations(self, tenant_id: str = DEFAULT_TENANT) -> list[dict[str, Any]]:
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT c.id, c.title, c.created_at, c.updated_at, "
                     "(SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count "
-                    "FROM conversations c ORDER BY c.updated_at DESC"
+                    "FROM conversations c WHERE c.tenant_id = %s ORDER BY c.updated_at DESC",
+                    (tenant_id,),
                 )
                 return cur.fetchall()
 
-    def get_conversation(self, conv_id: str) -> Optional[dict[str, Any]]:
+    def get_conversation(self, conv_id: str, tenant_id: str = DEFAULT_TENANT) -> Optional[dict[str, Any]]:
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM conversations WHERE id = %s", (conv_id,))
+                cur.execute(
+                    "SELECT * FROM conversations WHERE id = %s AND tenant_id = %s",
+                    (conv_id, tenant_id),
+                )
                 row = cur.fetchone()
             if row is None:
+                # 不属于本租户的会话一律按"不存在"处理，避免暴露他人会话是否存在
                 return None
             with conn.cursor() as cur:
                 cur.execute(
@@ -219,21 +307,32 @@ class Database:
             "messages": messages,
         }
 
-    def delete_conversation(self, conv_id: str) -> None:
-        """删除会话及其全部消息。
+    def delete_conversation(self, conv_id: str, tenant_id: str = DEFAULT_TENANT) -> None:
+        """删除本租户的会话及其全部消息。
 
-        先显式删消息：老部署的 messages 表可能没有 fk_messages_conversation 外键
-        （CREATE TABLE IF NOT EXISTS 不会改已存在的表），只删父表会留下孤儿消息
-        （历史 bug，实测残留 2 条，见 docs/review-v1-audit.md §2.4）。
+        两个细节：
+
+        1. 先显式删消息：老部署的 messages 表可能没有 fk_messages_conversation 外键
+           （CREATE TABLE IF NOT EXISTS 不会改已存在的表），只删父表会留下孤儿消息
+           （历史 bug，实测残留 2 条，见 docs/review-v1-audit.md §2.4）。
+        2. 删消息时用 JOIN conversations 再带一次 tenant_id —— 保证**任何情况下**
+           都不会删到别的租户会话下的消息，而不是依赖"调用方一定先校验过归属"。
         """
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM messages WHERE conversation_id = %s", (conv_id,))
-                cur.execute("DELETE FROM conversations WHERE id = %s", (conv_id,))
+                cur.execute(
+                    "DELETE m FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+                    "WHERE m.conversation_id = %s AND c.tenant_id = %s",
+                    (conv_id, tenant_id),
+                )
+                cur.execute(
+                    "DELETE FROM conversations WHERE id = %s AND tenant_id = %s",
+                    (conv_id, tenant_id),
+                )
 
     def count_orphan_messages(self) -> int:
-        """统计没有对应会话的消息（运维排查用）。"""
+        """统计没有对应会话的消息（运维排查用，跨全部租户）。"""
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
@@ -245,7 +344,7 @@ class Database:
                 return int(cur.fetchone()["c"])
 
     def purge_orphan_messages(self) -> int:
-        """清理历史遗留的孤儿消息，返回删除条数。"""
+        """清理历史遗留的孤儿消息，返回删除条数（运维操作，跨全部租户）。"""
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
@@ -258,6 +357,7 @@ class Database:
 
     # ---- messages ----
     def add_message(self, conv_id: str, role: str, content: str, sources: Optional[list[dict]] = None) -> str:
+        """追加消息。**不带 tenant_id**：消息归属由会话决定，会话已按租户隔离。"""
         msg_id = _new_id()
         sources_json = json.dumps(sources, ensure_ascii=False) if sources else None
         with self._lock:
@@ -271,22 +371,25 @@ class Database:
         return msg_id
 
     # ---- evaluation_runs ----
-    def save_evaluation_run(self, metrics: dict) -> str:
+    def save_evaluation_run(self, metrics: dict, tenant_id: str = DEFAULT_TENANT) -> str:
         run_id = _new_id()
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO evaluation_runs(id, metrics) VALUES(%s, %s)",
-                    (run_id, json.dumps(metrics, ensure_ascii=False)),
+                    "INSERT INTO evaluation_runs(id, metrics, tenant_id) VALUES(%s, %s, %s)",
+                    (run_id, json.dumps(metrics, ensure_ascii=False), tenant_id),
                 )
         return run_id
 
-    def list_evaluation_runs(self) -> list[dict[str, Any]]:
+    def list_evaluation_runs(self, tenant_id: str = DEFAULT_TENANT) -> list[dict[str, Any]]:
         with self._lock:
             conn = self._ensure_conn()
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM evaluation_runs ORDER BY created_at DESC")
+                cur.execute(
+                    "SELECT * FROM evaluation_runs WHERE tenant_id = %s ORDER BY created_at DESC",
+                    (tenant_id,),
+                )
                 return cur.fetchall()
 
     def close(self) -> None:

@@ -1,0 +1,62 @@
+[
+  {
+    "candidates": 5,
+    "chunk_count": 190,
+    "noop": {
+      "recall_at_1": 0.7949,
+      "recall_at_k": 0.9231,
+      "mrr": 0.847,
+      "not_found": 3,
+      "latency_ms_mean": 25.8,
+      "latency_ms_p50": 24.2
+    },
+    "rerank": {
+      "recall_at_1": 0.7949,
+      "recall_at_k": 0.9231,
+      "mrr": 0.8526,
+      "not_found": 3,
+      "latency_ms_mean": 1464.0,
+      "latency_ms_p50": 1454.0
+    }
+  },
+  {
+    "candidates": 10,
+    "chunk_count": 190,
+    "noop": {
+      "recall_at_1": 0.7949,
+      "recall_at_k": 0.9231,
+      "mrr": 0.847,
+      "not_found": 3,
+      "latency_ms_mean": 14.2,
+      "latency_ms_p50": 14.3
+    },
+    "rerank": {
+      "recall_at_1": 0.7949,
+      "recall_at_k": 0.9744,
+      "mrr": 0.8697,
+      "not_found": 1,
+      "latency_ms_mean": 2843.8,
+      "latency_ms_p50": 2804.2
+    }
+  },
+  {
+    "candidates": 20,
+    "chunk_count": 190,
+    "noop": {
+      "recall_at_1": 0.7949,
+      "recall_at_k": 0.9231,
+      "mrr": 0.847,
+      "not_found": 3,
+      "latency_ms_mean": 19.1,
+      "latency_ms_p50": 19.0
+    },
+    "rerank": {
+      "recall_at_1": 0.8205,
+      "recall_at_k": 1.0,
+      "mrr": 0.891,
+      "not_found": 0,
+      "latency_ms_mean": 6171.8,
+      "latency_ms_p50": 6204.7
+    }
+  }
+]

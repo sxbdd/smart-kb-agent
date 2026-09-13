@@ -6,8 +6,10 @@ import re
 from typing import List, Optional
 
 from app.core.prompt_templates import build_agent_prompt
+from app.core.tools import build_tools
 from app.models.schemas import Source
 from app.services.router import is_calculation
+from app.services.tenancy import normalize_tenant
 
 
 class AgentEngine:
@@ -17,7 +19,27 @@ class AgentEngine:
         self.rag = rag
         self.max_iterations = max_iterations
 
-    def run(self, question: str, history: Optional[List[dict]] = None) -> tuple[str, List[Source]]:
+    def run(
+        self,
+        question: str,
+        history: Optional[List[dict]] = None,
+        tenant_id: Optional[str] = None,
+    ) -> tuple[str, List[Source]]:
+        """执行一次问答；``tenant_id`` 非 None 时，整条链路只检索该租户的库。
+
+        租户绑定放在 run 里而不是 __init__：容器只在启动时建一次 AgentEngine，
+        租户却是**每个请求**才知道的。所以这里按请求重建租户绑定的工具。
+        为 None 时**一字不变**地沿用容器注入的 tools（V1 行为）。
+        """
+        tenant = None if tenant_id is None else normalize_tenant(tenant_id)
+        tools = self.tools
+        if tenant is not None and self.rag is not None:
+            # 不做跨请求缓存：build_tools 很轻（只是建几个闭包），
+            # 而缓存键一旦写错就是租户串号，代价远大于这点开销。
+            tools = {t.name: t for t in build_tools(self.rag, tenant)}
+        # rag 为 None 却要求租户过滤时无处可绑（引擎不知道注入工具用的是哪个 rag），
+        # 只能退回注入工具；容器始终传 rag，生产路径不会走到这里。
+
         first_user = question
         if history:
             recent = history[-6:]
@@ -33,7 +55,7 @@ class AgentEngine:
         if is_calculation(question):
             grounding, sources = "", []
         else:
-            grounding, sources = self._grounding(question)
+            grounding, sources = self._grounding(question, tenant)
             if grounding:
                 messages.append({"role": "system", "content": grounding})
 
@@ -47,10 +69,10 @@ class AgentEngine:
                 text = action_input if (isinstance(action_input, str) and action_input.strip()) else response
                 return (text if isinstance(text, str) else str(text)), sources
 
-            if action in self.tools:
+            if action in tools:
                 if isinstance(action_input, dict):
                     try:
-                        observation = self.tools[action].execute(**action_input)
+                        observation = tools[action].execute(**action_input)
                     except Exception as exc:
                         observation = f"工具执行失败: {exc}"
                 else:
@@ -63,10 +85,15 @@ class AgentEngine:
 
         return "抱歉，处理这个问题需要的步骤超出了我的能力范围。", sources
 
-    def _grounding(self, question: str) -> tuple[str, List[Source]]:
+    def _grounding(self, question: str, tenant_id: Optional[str] = None) -> tuple[str, List[Source]]:
         if self.rag is None:
             return "（未配置知识库检索工具）", []
-        results = self.rag.search(question, top_k=3)
+        # 依据检索必须和工具检索走同一个租户：否则 prompt 里的"依据"和工具返回的片段
+        # 可能来自不同租户，既串数据又让模型自相矛盾。
+        if tenant_id is None:
+            results = self.rag.search(question, top_k=3)
+        else:
+            results = self.rag.search(question, top_k=3, tenant_id=tenant_id)
         if not results:
             return "知识库检索结果：未检索到相关内容。", []
         kb = "\n".join([f"- {r.metadata.get('document_name', '')}: {r.document[:200]}" for r in results])

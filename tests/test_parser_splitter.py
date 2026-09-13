@@ -1,6 +1,7 @@
 """文档解析与文本切分。"""
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -85,11 +86,14 @@ def test_parse_docx_including_tables(tmp_path: Path):
 
 
 def test_unsupported_extension_rejected(tmp_path: Path):
-    p = tmp_path / "a.xlsx"
+    p = tmp_path / "a.pptx"
     p.write_bytes(b"binary")
     with pytest.raises(UnsupportedFileTypeError) as exc:
         parse_document(str(p))
     assert exc.value.status_code == 415
+    # 报错文案要覆盖新增类型，便于用户知道该传什么
+    assert "XLSX" in exc.value.detail
+    assert "CSV" in exc.value.detail
 
 
 # ---------- PDF ----------
@@ -192,3 +196,179 @@ def test_parse_corrupt_docx_raises_app_error(tmp_path: Path):
         parse_document(str(p))
     assert exc.value.status_code == 400
     assert "DOCX 解析失败" in exc.value.detail
+
+
+# ---------- Excel（xlsx / xlsm） ----------
+
+def _openpyxl():
+    return pytest.importorskip("openpyxl")
+
+
+def test_parse_xlsx_multiple_sheets_with_header(tmp_path: Path):
+    """多 sheet：每个 sheet 先出 `【sheet名】`，表头与数据行都用 " | " 连接。"""
+    openpyxl = _openpyxl()
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "员工表"
+    ws1.append(["姓名", "部门", "工号"])
+    ws1.append(["张三", "研发", "E001"])
+    ws1.append(["李四", "财务", "E002"])
+    ws2 = wb.create_sheet("考勤表")
+    ws2.append(["员工", "年假天数"])
+    ws2.append(["张三", 5])
+    path = tmp_path / "hr.xlsx"
+    wb.save(str(path))
+
+    text = parse_document(str(path))
+    assert "【员工表】" in text
+    assert "【考勤表】" in text
+    assert "姓名 | 部门 | 工号" in text
+    assert "张三 | 研发 | E001" in text
+    assert "员工 | 年假天数" in text
+    # sheet 顺序即输出顺序，方便下游按 sheet 归属切分
+    assert text.index("【员工表】") < text.index("【考勤表】")
+
+
+def test_parse_xlsx_blank_rows_are_skipped(tmp_path: Path):
+    """整行空白（含 Excel 常见的尾部空行）不能产出 " | " 行。"""
+    openpyxl = _openpyxl()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "数据"
+    ws.append(["A", "B"])
+    ws.append([None, None])
+    ws.append([None, "  ", ""])          # 全空白单元格
+    ws.append(["C", None])               # 半空行：只保留有值的那格
+    ws.append([None, None])
+    path = tmp_path / "blank_rows.xlsx"
+    wb.save(str(path))
+
+    lines = parse_document(str(path)).splitlines()
+    assert lines[0] == "【数据】"
+    assert lines[1] == "A | B"
+    assert lines[2] == "C"               # 空单元格被丢弃，不留 "C | "
+    assert len(lines) == 3
+
+
+def test_parse_xlsx_empty_sheet(tmp_path: Path):
+    """空表也要保留 sheet 标题行，其余为空。"""
+    openpyxl = _openpyxl()
+    wb = openpyxl.Workbook()
+    wb.active.title = "空表"
+    wb.create_sheet("空表2")
+    path = tmp_path / "empty.xlsx"
+    wb.save(str(path))
+
+    text = parse_document(str(path))
+    assert text.splitlines() == ["【空表】", "【空表2】"]
+
+
+def test_parse_xlsx_cell_types_serialized(tmp_path: Path):
+    """日期 / 整数浮点 / 布尔要有稳定文本形态（openpyxl 会把数字读成 float）。"""
+    openpyxl = _openpyxl()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "类型"
+    ws.append(["日期", date(2026, 1, 1), 5.0, True])
+    path = tmp_path / "types.xlsx"
+    wb.save(str(path))
+
+    text = parse_document(str(path))
+    assert "日期 | 2026-01-01 | 5 | True" in text
+
+
+def test_parse_xlsm_supported(tmp_path: Path):
+    """.xlsm 与 .xlsx 同解析路径（宏不解析，只取单元格值）。"""
+    openpyxl = _openpyxl()
+    wb = openpyxl.Workbook()
+    wb.active.title = "宏表"
+    wb.active.append(["报销", 100])
+    path = tmp_path / "macro.xlsm"
+    wb.save(str(path))
+
+    text = parse_document(str(path))
+    assert "【宏表】" in text
+    assert "报销 | 100" in text
+
+
+def test_parse_corrupt_xlsx_raises_app_error(tmp_path: Path):
+    """非 zip 内容（改后缀的文本文件）→ AppError(400)，与 PDF/DOCX 一致。"""
+    p = tmp_path / "broken.xlsx"
+    p.write_bytes("这其实是一个文本文件".encode("utf-8"))
+    with pytest.raises(AppError) as exc:
+        parse_document(str(p))
+    assert exc.value.status_code == 400
+    assert "Excel 解析失败" in exc.value.detail
+
+
+def test_parse_truncated_xlsx_raises_app_error(tmp_path: Path):
+    """合法的 zip 头但内容被截断 → 仍是 400 而不是 500。"""
+    p = tmp_path / "truncated.xlsx"
+    p.write_bytes(b"PK\x03\x04" + b"\x00" * 32)
+    with pytest.raises(AppError) as exc:
+        parse_document(str(p))
+    assert exc.value.status_code == 400
+    assert "Excel 解析失败" in exc.value.detail
+
+
+# ---------- CSV ----------
+
+def test_parse_csv_plain(tmp_path: Path):
+    p = tmp_path / "a.csv"
+    p.write_text("姓名,部门\n张三,研发\n", encoding="utf-8")
+    assert parse_document(str(p)).splitlines() == ["姓名 | 部门", "张三 | 研发"]
+
+
+def test_parse_csv_utf8_bom(tmp_path: Path):
+    """带 BOM 时表头首列不能被写成 "\\ufeff姓名"。"""
+    p = tmp_path / "bom.csv"
+    p.write_bytes("姓名,部门\n张三,研发\n".encode("utf-8-sig"))
+    lines = parse_document(str(p)).splitlines()
+    assert lines[0] == "姓名 | 部门"
+    assert "\ufeff" not in lines[0]
+
+
+def test_parse_csv_semicolon_delimiter(tmp_path: Path):
+    p = tmp_path / "semi.csv"
+    p.write_text("姓名;部门;工号\n张三;研发;E001\n", encoding="utf-8")
+    assert "张三 | 研发 | E001" in parse_document(str(p))
+
+
+def test_parse_csv_fullwidth_semicolon_delimiter(tmp_path: Path):
+    """中文全角分号分隔（国内导出常见）。"""
+    p = tmp_path / "fw.csv"
+    p.write_text("姓名；部门\n张三；研发\n", encoding="utf-8")
+    assert "张三 | 研发" in parse_document(str(p))
+
+
+def test_parse_csv_tab_delimiter(tmp_path: Path):
+    p = tmp_path / "tab.csv"
+    p.write_text("姓名\t部门\n张三\t研发\n", encoding="utf-8")
+    assert "张三 | 研发" in parse_document(str(p))
+
+
+def test_parse_csv_gb18030_fallback(tmp_path: Path):
+    """编码回退链与 txt 共用：gb18030 也能读。"""
+    p = tmp_path / "gbk.csv"
+    p.write_bytes("姓名,部门\n张三,研发\n".encode("gb18030"))
+    assert "张三 | 研发" in parse_document(str(p))
+
+
+def test_parse_csv_skips_blank_lines(tmp_path: Path):
+    p = tmp_path / "gaps.csv"
+    p.write_text("A,B\n\n   \nC,D\n", encoding="utf-8")
+    assert parse_document(str(p)).splitlines() == ["A | B", "C | D"]
+
+
+def test_parse_csv_quoted_field_with_delimiter(tmp_path: Path):
+    """引号内的分隔符不能拆列。"""
+    p = tmp_path / "quoted.csv"
+    p.write_text('名称,备注\n"制度A,试行",2026\n', encoding="utf-8")
+    lines = parse_document(str(p)).splitlines()
+    assert lines[1] == "制度A,试行 | 2026"
+
+
+def test_parse_csv_empty_file(tmp_path: Path):
+    p = tmp_path / "empty.csv"
+    p.write_text("", encoding="utf-8")
+    assert parse_document(str(p)) == ""

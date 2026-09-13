@@ -38,7 +38,7 @@ jobs:
           python -m pip install -r requirements-ci.txt
 
       - name: 语法检查
-        run: python -m compileall -q app tests scripts
+        run: python -m compileall -q app tests scripts mcp_server
 
       - name: 运行测试
         run: python -m pytest -v

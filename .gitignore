@@ -21,6 +21,15 @@ data/*.db
 *.db
 *.sqlite3
 
+# 压测/干扰语料：由 scripts/gen_corpus.py 用固定种子确定性生成，
+# 仓库里只留 README（含复现命令与踩坑说明），不提交上百个生成文件。
+data/kb_ext/*.txt
+data/kb_ext/*.docx
+data/kb_large/*.txt
+data/kb_large/*.docx
+!data/kb_ext/README.md
+!data/kb_large/README.md
+
 # 日志
 *.log
 

@@ -13,7 +13,16 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 
-from app.api import routes_ask, routes_auth, routes_conversations, routes_documents, routes_evaluation, routes_upload
+from app.api import (
+    routes_admin,
+    routes_ask,
+    routes_auth,
+    routes_conversations,
+    routes_documents,
+    routes_evaluation,
+    routes_stream,
+    routes_upload,
+)
 from app.container import build_container
 from app.utils.exceptions import AppError
 
@@ -28,6 +37,8 @@ TAGS_METADATA = [
     {"name": "智能问答", "description": "Router 分发：普通对话 / RAG / Agent"},
     {"name": "对话管理", "description": "多轮对话的查询与删除"},
     {"name": "评测", "description": "运行评测并输出指标"},
+    {"name": "流式问答", "description": "SSE 流式回答与前端运行时配置"},
+    {"name": "租户管理", "description": "本租户用户列表与管理员代建账号"},
 ]
 
 # 前端静态资源白名单：只暴露这两个文件，避免把整个 frontend 目录当静态站发布
@@ -83,4 +94,8 @@ def create_app(cfg=None) -> FastAPI:
     app.include_router(routes_documents.router)
     app.include_router(routes_conversations.router)
     app.include_router(routes_evaluation.router)
+    # 管理面：整个应用只有这一处用户管理入口，便于权限审计
+    app.include_router(routes_admin.router)
+    # 流式问答：ENABLE_STREAM=false 时 /ask/stream 返回 404（接口视作不存在），前端据此回退 /ask
+    app.include_router(routes_stream.router)
     return app

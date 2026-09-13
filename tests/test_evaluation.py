@@ -206,12 +206,12 @@ def test_non_refusal_on_unanswerable_fails(tmp_path):
     assert metrics["overall_accuracy"] == 0.0
 
 
-def test_details_excluded_from_saved_summary(client, auth, fake_db, tmp_path):
+def test_details_excluded_from_saved_summary(client, admin_auth, fake_db, tmp_path):
     path = _write_set(tmp_path, [{
         "id": "q1", "question": "你好", "answerable": False,
         "expected_keywords": [], "expected_source_doc": "",
     }])
-    resp = client.post("/evaluation/run", json={"test_set_path": path}, headers=auth)
+    resp = client.post("/evaluation/run", json={"test_set_path": path}, headers=admin_auth)
     assert resp.status_code == 200, resp.text
     assert "details" in resp.json(), "接口应返回逐题细节"
 
@@ -221,9 +221,9 @@ def test_details_excluded_from_saved_summary(client, auth, fake_db, tmp_path):
 
 # ---------- 接口 ----------
 
-def test_run_evaluation_without_body_uses_default_set(client, auth):
+def test_run_evaluation_without_body_uses_default_set(client, admin_auth):
     """回归：不传 test_set_path 时必须能用默认测试集，不能再 500。"""
-    resp = client.post("/evaluation/run", json={}, headers=auth)
+    resp = client.post("/evaluation/run", json={}, headers=admin_auth)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["total"] == len(_default_items())
@@ -231,27 +231,27 @@ def test_run_evaluation_without_body_uses_default_set(client, auth):
     assert body["run_id"]
 
 
-def test_evaluation_history_records_runs(client, auth):
-    assert client.get("/evaluation/runs", headers=auth).json() == []
-    client.post("/evaluation/run", json={}, headers=auth)
-    rows = client.get("/evaluation/runs", headers=auth).json()
+def test_evaluation_history_records_runs(client, admin_auth):
+    assert client.get("/evaluation/runs", headers=admin_auth).json() == []
+    client.post("/evaluation/run", json={}, headers=admin_auth)
+    rows = client.get("/evaluation/runs", headers=admin_auth).json()
     assert len(rows) == 1
     assert rows[0]["metrics"]["total"] == len(_default_items())
     assert "details" not in rows[0]["metrics"]
 
 
-def test_evaluation_end_to_end_hits_keyword_and_source(client, auth, tmp_path):
+def test_evaluation_end_to_end_hits_keyword_and_source(client, admin_auth, tmp_path):
     policy = "员工考勤制度：特殊代号 ZEBRA-TOKEN 对应标准 600 元。"
     client.post(
         "/upload",
         files={"file": ("制度.txt", io.BytesIO(policy.encode("utf-8")), "text/plain")},
-        headers=auth,
+        headers=admin_auth,
     )
     path = _write_set(tmp_path, [{
         "id": "q1", "question": "特殊代号 ZEBRA-TOKEN 是什么", "answerable": True,
         "expected_keywords": ["ZEBRA-TOKEN"], "expected_source_doc": "制度.txt",
     }])
-    metrics = client.post("/evaluation/run", json={"test_set_path": path, "top_k": 3}, headers=auth).json()
+    metrics = client.post("/evaluation/run", json={"test_set_path": path, "top_k": 3}, headers=admin_auth).json()
     assert metrics["keyword_accuracy"] == 1.0
     assert metrics["source_accuracy"] == 1.0
     assert metrics["overall_accuracy"] == 1.0

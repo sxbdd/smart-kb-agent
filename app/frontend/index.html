@@ -211,6 +211,8 @@
   let selectedFile = null;
   let allDocs = [];
   let docPage = 1;
+  // 流式开关：由后端 /config 告知（ENABLE_STREAM=false 时前端必须回退非流式 /ask）
+  let streamEnabled = false;
 
   function $(id) { return document.getElementById(id); }
   function authHeaders() { return token ? { "Authorization": "Bearer " + token } : {}; }
@@ -229,7 +231,7 @@
 
   // ===== 认证 =====
   function refreshAuthUI() {
-    if (token) { $("login-panel").classList.add("hidden"); $("app").classList.remove("hidden"); $("auth-user").textContent=username; $("btn-logout").classList.remove("hidden"); loadConversations(); loadDocuments(); loadEvalHistory(); }
+    if (token) { $("login-panel").classList.add("hidden"); $("app").classList.remove("hidden"); $("auth-user").textContent=username; $("btn-logout").classList.remove("hidden"); loadConversations(); loadDocuments(); loadEvalHistory(); loadRuntimeConfig(); }
     else { $("login-panel").classList.remove("hidden"); $("app").classList.add("hidden"); $("auth-user").textContent=""; $("btn-logout").classList.add("hidden"); }
   }
   function logout() { token=""; username=""; currentConvId=null; localStorage.removeItem("kb_token"); localStorage.removeItem("kb_user"); refreshAuthUI(); }
@@ -324,23 +326,124 @@
   function scrollToBottom(){ const el=$("messages"); el.scrollTop=el.scrollHeight; }
 
   // ===== 提问 =====
+  /** 运行时能力探测：拿不到就保守地按"不支持流式"处理，走原来的 /ask。 */
+  async function loadRuntimeConfig(){
+    try{
+      const resp=await fetch(BASE+"/config",{headers:authHeaders()});
+      if(resp.ok){ const cfg=await resp.json(); streamEnabled=!!cfg.enable_stream; }
+      else { streamEnabled=false; }
+    }catch(e){ streamEnabled=false; }
+  }
+
   async function ask(){
     const q=$("question").value.trim(); if(!q) return;
     $("ask-btn").disabled=true; $("question").value="";
     const m=$("messages");
     m.insertAdjacentHTML("beforeend",'<div class="msg user"><div class="bubble">'+escapeHtml(q)+'</div></div>');
     m.insertAdjacentHTML("beforeend",'<div class="msg assistant"><div class="markdown" style="color:var(--text-muted)">思考中...</div></div>');
+    // 直接持有本轮回答气泡的引用（不能用固定 id：多轮提问时 id 会重复，$() 会拿到上一轮的元素）
+    const box=m.lastElementChild;
     scrollToBottom();
+    try{
+      if(streamEnabled && await askStream(q, box)) { loadConversations(); return; }
+      await askNonStream(q, box);   // 回退：开关关闭、或流式在收到任何内容前就失败
+    }finally{ $("ask-btn").disabled=false; $("question").focus(); }
+  }
+
+  /**
+   * 流式提问：fetch + ReadableStream 手工解析 SSE（EventSource 不支持 POST，故不能用它）。
+   * @returns {boolean} 是否成功消费完整条流（false 表示"还什么都没渲染，可以安全回退"）
+   */
+  async function askStream(q, box){
+    let answer="", mode="", received=false, completed=false, errMsg="";
+    try{
+      const resp=await fetch(BASE+"/ask/stream",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({question:q,conversation_id:currentConvId,top_k:3})});
+      if(handle401(resp)) return true;   // 已登出，交回外层
+      if(resp.status===404||resp.status===405){ return false; }   // 后端没挂 /ask/stream
+      if(!resp.ok || !resp.body){ return false; }
+
+      let aborted=false;
+      await readSSE(resp.body, (ev, data) => {
+        if(aborted) return;
+        if(ev==="meta"){
+          mode=data.mode||"";
+          if(data.conversation_id){ currentConvId=data.conversation_id; }
+        } else if(ev==="delta"){
+          received=true;
+          answer+=data.text||"";
+          renderStreamDelta(box, answer);
+          scrollToBottom();
+        } else if(ev==="sources"){
+          box.dataset.sources=JSON.stringify(data.sources||[]);
+          box.dataset.mode=mode;
+          box.innerHTML=renderAssistant(answer, data.sources||[], mode);
+        } else if(ev==="done"){
+          completed=true;
+          if(!box.dataset.sources) box.innerHTML=renderAssistant(answer, [], mode);
+        } else if(ev==="error"){
+          // 服务端明确上报的失败：这里已经渲染过内容，直接报错，**不再回退**（否则会重复提问/重复落库）
+          errMsg=data.detail||"流式问答失败";
+          aborted=true;
+        }
+      });
+      if(errMsg){ box.innerHTML='<div class="markdown err">'+escapeHtml(errMsg)+'</div>'; return true; }
+      if(completed){ scrollToBottom(); return true; }
+      // 流提前结束（没收到 done）：已渲染的内容保留，并给出可见提示
+      if(received){ box.insertAdjacentHTML("beforeend",'<div class="markdown err">流式响应提前结束，内容可能不完整。</div>'); return true; }
+      return false;
+    }catch(e){
+      if(received){
+        // 已经渲染过增量：不能用回退再问一次（会重复计费/重复落库），只报错
+        box.innerHTML='<div class="markdown err">流式输出中断：'+escapeHtml(e&&e.message?e.message:"未知错误")+'</div>';
+        return true;
+      }
+      return false;   // 一个字都没收到 → 安全回退非流式
+    }
+  }
+
+  /** 逐段渲染：每来一段就重渲染一次 markdown（内容不大，开销可接受）。 */
+  function renderStreamDelta(box, text){
+    const md=box.querySelector(".markdown");
+    if(md){ md.innerHTML=renderMarkdown(text); md.style.color=""; }
+    else { box.innerHTML='<div class="markdown">'+renderMarkdown(text)+'</div>'; }
+  }
+
+  /** 极简 SSE 解析：按 \n\n 切帧，取出 event / data 后回调。buffer 保证跨 chunk 的半帧不被丢掉。 */
+  async function readSSE(body, onEvent){
+    const reader=body.getReader();
+    const decoder=new TextDecoder();
+    let buffer="";
+    for(;;){
+      const {done, value}=await reader.read();
+      if(done) break;
+      buffer+=decoder.decode(value, {stream:true});
+      let idx;
+      while((idx=buffer.indexOf("\n\n"))>=0){
+        const frame=buffer.slice(0,idx); buffer=buffer.slice(idx+2);
+        let ev="message", raw=null;
+        for(const line of frame.split("\n")){
+          if(line.startsWith("event:")) ev=line.slice(6).trim();
+          else if(line.startsWith("data:")) raw=(raw===null?"":raw)+line.slice(5).trim();
+        }
+        if(raw===null) continue;
+        let data={};
+        try{ data=JSON.parse(raw); }catch(e){ data={text:raw}; }
+        await onEvent(ev, data);
+      }
+    }
+  }
+
+  /** 非流式回退：原 /ask 逻辑保持不变。 */
+  async function askNonStream(q, box){
     try{
       const resp=await fetch(BASE+"/ask",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({question:q,conversation_id:currentConvId,top_k:3})});
       if(handle401(resp))return;
       const data=await resp.json();
-      if(!resp.ok){ m.lastElementChild.innerHTML='<div class="markdown err">'+formatError(data)+'</div>'; return; }
+      if(!resp.ok){ box.innerHTML='<div class="markdown err">'+formatError(data)+'</div>'; return; }
       currentConvId=data.conversation_id;
-      m.lastElementChild.innerHTML=renderAssistant(data.answer, data.sources||[], data.mode||"");
+      box.innerHTML=renderAssistant(data.answer, data.sources||[], data.mode||"");
       scrollToBottom(); loadConversations();
-    }catch(e){ m.lastElementChild.innerHTML='<div class="markdown err">网络错误：'+escapeHtml(e.message)+'</div>'; }
-    finally{ $("ask-btn").disabled=false; $("question").focus(); }
+    }catch(e){ box.innerHTML='<div class="markdown err">网络错误：'+escapeHtml(e.message)+'</div>'; }
   }
 
   // ===== 知识库 =====
