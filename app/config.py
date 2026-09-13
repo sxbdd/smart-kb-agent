@@ -76,6 +76,7 @@ class Settings:
     top_k: int = _int("TOP_K", 5)
     rerank_top_k: int = _int("RERANK_TOP_K", 3)
     enable_rerank: bool = _bool("ENABLE_RERANK", False)
+    rerank_model: str = _env("RERANK_MODEL", "BAAI/bge-reranker-base")
     max_history_messages: int = _int("MAX_HISTORY_MESSAGES", 6)
 
     # Agent

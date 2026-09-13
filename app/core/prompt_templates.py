@@ -32,6 +32,9 @@ SYSTEM_PROMPT = """你是一个企业知识库助手。请根据以下提供的�
 
 CHAT_PROMPT = """你是一个友好的企业智能助手。对于日常闲聊、问候或与知识库无关的通用问题，请简短自然地回应，不需要引用任何文档。
 
+对话历史：
+{history}
+
 用户问题：{question}
 
 请回答："""
@@ -52,20 +55,26 @@ Action Input: <JSON 参数；若 Action 是 Final Answer，则直接写最终答
 {tool_desc}"""
 
 
+def _format_history(history: Optional[List[dict]], max_history_messages: int = 6) -> str:
+    if not history:
+        return "（无历史对话）"
+    recent = history[-max_history_messages:]
+    return "\n".join([f"{h['role']}: {h['content']}" for h in recent])
+
+
 def build_prompt(question: str, context: str, history: Optional[List[dict]] = None, max_history_messages: int = 6) -> str:
-    history_str = ""
-    if history:
-        recent = history[-max_history_messages:]
-        history_str = "\n".join([f"{h['role']}: {h['content']}" for h in recent])
     return SYSTEM_PROMPT.format(
         context=context,
-        history=history_str or "（无历史对话）",
+        history=_format_history(history, max_history_messages),
         question=question,
     )
 
 
-def build_chat_prompt(question: str) -> str:
-    return CHAT_PROMPT.format(question=question)
+def build_chat_prompt(question: str, history: Optional[List[dict]] = None, max_history_messages: int = 6) -> str:
+    return CHAT_PROMPT.format(
+        history=_format_history(history, max_history_messages),
+        question=question,
+    )
 
 
 def build_agent_prompt(tool_desc: str) -> str:

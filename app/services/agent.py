@@ -1,9 +1,9 @@
-"""Agent 引擎：ReAct 循环 + 知识库引用硬约束。"""
+"""Agent 引擎：ReAct 循环 + 知识库引用硬约束（支持多轮历史）。"""
 from __future__ import annotations
 
 import json
 import re
-from typing import List
+from typing import List, Optional
 
 from app.core.prompt_templates import build_agent_prompt
 from app.models.schemas import Source
@@ -16,8 +16,14 @@ class AgentEngine:
         self.rag = rag
         self.max_iterations = max_iterations
 
-    def run(self, question: str) -> tuple[str, List[Source]]:
-        messages = [{"role": "user", "content": question}]
+    def run(self, question: str, history: Optional[List[dict]] = None) -> tuple[str, List[Source]]:
+        first_user = question
+        if history:
+            recent = history[-6:]
+            history_str = "\n".join([f"{h['role']}: {h['content']}" for h in recent])
+            first_user = f"对话历史：\n{history_str}\n\n当前问题：{question}"
+
+        messages = [{"role": "user", "content": first_user}]
         grounding, sources = self._grounding(question)
         messages.append({"role": "system", "content": grounding})
 
@@ -75,7 +81,6 @@ class AgentEngine:
 
     @staticmethod
     def _parse(response: str) -> tuple[str, str, str | dict]:
-        # 优先检测 Final Answer：提取其后的完整文本作为最终答案（兼容有无 Action Input 行两种写法）
         fa = re.search(r"Final Answer[:：]?\s*(.+)", response, re.IGNORECASE | re.DOTALL)
         if fa:
             final = fa.group(1).strip()

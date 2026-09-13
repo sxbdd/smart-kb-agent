@@ -1,4 +1,4 @@
-"""文档解析：PDF / Markdown / TXT → 纯文本。"""
+"""文档解析：PDF / Markdown / TXT / DOCX → 纯文本。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,7 +15,9 @@ def parse_document(file_path: str) -> str:
         return _parse_pdf(path)
     if ext in _TEXT_EXTS:
         return _parse_text(path)
-    raise UnsupportedFileTypeError(f"不支持的文档类型：{ext}（支持 PDF / Markdown / TXT）")
+    if ext == ".docx":
+        return _parse_docx(path)
+    raise UnsupportedFileTypeError(f"不支持的文档类型：{ext}（支持 PDF / Markdown / TXT / DOCX）")
 
 
 def _parse_text(path: Path) -> str:
@@ -31,9 +33,25 @@ def _parse_text(path: Path) -> str:
 def _parse_pdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
-    except ImportError as exc:  # pragma: no cover
+    except ImportError as exc:
         raise UnsupportedFileTypeError("缺少 pypdf，请先安装：pip install pypdf") from exc
 
     reader = PdfReader(str(path))
     pages = [page.extract_text() or "" for page in reader.pages]
     return "\n\n".join(pages)
+
+
+def _parse_docx(path: Path) -> str:
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise UnsupportedFileTypeError("缺少 python-docx，请先安装：pip install python-docx") from exc
+
+    doc = Document(str(path))
+    parts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            if cells:
+                parts.append(" | ".join(cells))
+    return "\n\n".join(parts)

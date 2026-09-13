@@ -37,10 +37,10 @@ class ConversationService:
 
         mode = self.router.route(question)
         if mode == "chat":
-            answer = self.chat.answer(question)
+            answer = self.chat.answer(question, history=history)
             sources = []
         elif mode == "agent" and self.agent is not None:
-            answer, sources = self.agent.run(question)
+            answer, sources = self.agent.run(question, history=history)
         else:
             answer, sources = self.rag.answer(question, top_k=top_k, history=history)
 

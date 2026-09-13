@@ -1,12 +1,235 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>智能知识库系统</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>企业级 RAG + Agent 智能知识库系统</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2933; }
+  header { background: #1f2933; color: #fff; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; }
+  #auth-area { font-size: 14px; }
+  main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+  .card { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { font-size: 16px; margin-bottom: 12px; }
+  input, button, textarea { font-size: 14px; padding: 8px 12px; border: 1px solid #d9e2ec; border-radius: 6px; }
+  button { background: #2563eb; color: #fff; border: none; cursor: pointer; }
+  button:hover { background: #1d4ed8; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  input[type=text], input[type=password], input[type=file], textarea { width: 100%; margin-bottom: 8px; }
+  textarea { min-height: 60px; resize: vertical; }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; margin-bottom: 0; }
+  .tag { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 6px; }
+  .answer { background: #f8fafc; border-left: 3px solid #2563eb; padding: 12px; margin: 8px 0; border-radius: 4px; white-space: pre-wrap; }
+  .sources { font-size: 12px; color: #64748b; margin-top: 6px; }
+  .metrics { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+  .metric { flex: 1; min-width: 120px; background: #f0f9ff; border-radius: 8px; padding: 14px; text-align: center; }
+  .metric .val { font-size: 22px; font-weight: 700; color: #0369a1; }
+  .metric .lbl { font-size: 12px; color: #475569; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+  .hidden { display: none; }
+  .msg { font-size: 13px; color: #64748b; margin-top: 6px; }
+  .err { color: #dc2626; }
+</style>
 </head>
 <body>
+<header>
   <h1>企业级 RAG + Agent 智能知识库系统</h1>
-  <p>API 文档：<a href="/docs">/docs</a> ｜ 健康检查：<a href="/healthz">/healthz</a></p>
+  <div id="auth-area">
+    <span id="auth-user"></span>
+    <button id="btn-logout" class="hidden" onclick="logout()">退出</button>
+  </div>
+</header>
+<main>
+  <div id="login-panel" class="card">
+    <h2>登录</h2>
+    <input type="text" id="login-username" placeholder="用户名" />
+    <input type="password" id="login-password" placeholder="密码" />
+    <div class="row">
+      <button onclick="login()">登录</button>
+      <button onclick="register()" style="background:#059669">注册</button>
+    </div>
+    <div class="msg" id="login-msg"></div>
+  </div>
+
+  <div id="workspace" class="hidden">
+    <div class="card">
+      <h2>文档管理</h2>
+      <input type="file" id="file-input" accept=".pdf,.md,.txt,.docx" />
+      <div class="row"><button onclick="uploadDoc()">上传并建立索引</button></div>
+      <div class="msg" id="upload-msg"></div>
+    </div>
+
+    <div class="card">
+      <h2>智能问答（Router 自动分发 Chat / RAG / Agent）</h2>
+      <div class="row">
+        <input type="text" id="question" placeholder="输入问题，例如：出差住宿标准是多少？" />
+        <button onclick="ask()">提问</button>
+      </div>
+      <div id="answer-area"></div>
+    </div>
+
+    <div class="card">
+      <h2>评测</h2>
+      <div class="row">
+        <input type="text" id="test-set-path" value="data/evaluation/test_set_smart.json" />
+        <button onclick="runEval()">运行评测</button>
+        <button onclick="loadRuns()">刷新历史</button>
+      </div>
+      <div id="eval-metrics"></div>
+      <div id="eval-runs"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const BASE = "";
+let token = localStorage.getItem("kb_token") || "";
+let username = localStorage.getItem("kb_user") || "";
+
+function authHeaders() {
+  return token ? { "Authorization": "Bearer " + token } : {};
+}
+
+function refreshAuthUI() {
+  if (token) {
+    document.getElementById("login-panel").classList.add("hidden");
+    document.getElementById("workspace").classList.remove("hidden");
+    document.getElementById("auth-user").textContent = username;
+    document.getElementById("btn-logout").classList.remove("hidden");
+  } else {
+    document.getElementById("login-panel").classList.remove("hidden");
+    document.getElementById("workspace").classList.add("hidden");
+    document.getElementById("auth-user").textContent = "";
+    document.getElementById("btn-logout").classList.add("hidden");
+  }
+}
+
+function logout() {
+  token = ""; username = "";
+  localStorage.removeItem("kb_token"); localStorage.removeItem("kb_user");
+  refreshAuthUI();
+}
+
+async function login() {
+  const u = document.getElementById("login-username").value.trim();
+  const p = document.getElementById("login-password").value;
+  const resp = await fetch(BASE + "/auth/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: u, password: p })
+  });
+  const data = await resp.json();
+  if (resp.ok) {
+    token = data.token; username = data.username;
+    localStorage.setItem("kb_token", token); localStorage.setItem("kb_user", username);
+    document.getElementById("login-msg").textContent = "";
+    refreshAuthUI();
+  } else {
+    document.getElementById("login-msg").textContent = data.detail || "登录失败";
+  }
+}
+
+async function register() {
+  const u = document.getElementById("login-username").value.trim();
+  const p = document.getElementById("login-password").value;
+  const resp = await fetch(BASE + "/auth/register", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: u, password: p })
+  });
+  const data = await resp.json();
+  if (resp.ok) {
+    token = data.token; username = data.username;
+    localStorage.setItem("kb_token", token); localStorage.setItem("kb_user", username);
+    document.getElementById("login-msg").textContent = "";
+    refreshAuthUI();
+  } else {
+    document.getElementById("login-msg").textContent = data.detail || "注册失败";
+  }
+}
+
+async function uploadDoc() {
+  const f = document.getElementById("file-input").files[0];
+  if (!f) { document.getElementById("upload-msg").textContent = "请先选择文件"; return; }
+  const fd = new FormData(); fd.append("file", f);
+  const resp = await fetch(BASE + "/upload", { method: "POST", headers: authHeaders(), body: fd });
+  const data = await resp.json();
+  document.getElementById("upload-msg").textContent = resp.ok
+    ? ("已入库：" + data.filename + "（" + data.chunk_count + " 个片段）")
+    : (data.detail || "上传失败");
+}
+
+async function ask() {
+  const q = document.getElementById("question").value.trim();
+  if (!q) return;
+  const resp = await fetch(BASE + "/ask", {
+    method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ question: q, top_k: 3 })
+  });
+  const data = await resp.json();
+  const area = document.getElementById("answer-area");
+  if (!resp.ok) { area.innerHTML = '<div class="answer err">' + (data.detail || "出错") + '</div>'; return; }
+  let srcs = (data.sources || []).map(s => s.document_name + " (" + s.score.toFixed(3) + ")").join("、");
+  area.innerHTML =
+    '<div class="tag">' + data.mode + '</div>' +
+    '<div class="answer">' + escapeHtml(data.answer) + '</div>' +
+    '<div class="sources">引用来源：' + (srcs || "无") + '</div>';
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function runEval() {
+  const path = document.getElementById("test-set-path").value.trim();
+  const resp = await fetch(BASE + "/evaluation/run", {
+    method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ test_set_path: path, top_k: 3 })
+  });
+  const data = await resp.json();
+  if (!resp.ok) { document.getElementById("eval-metrics").innerHTML = '<div class="err">' + (data.detail || "评测失败") + '</div>'; return; }
+  renderMetrics(data);
+  loadRuns();
+}
+
+function renderMetrics(m) {
+  const pct = v => (v == null ? "-" : (v * 100).toFixed(1) + "%");
+  document.getElementById("eval-metrics").innerHTML =
+    '<div class="metrics">' +
+    metricCard("总题数", m.total) +
+    metricCard("关键词命中", pct(m.keyword_accuracy)) +
+    metricCard("来源准确", pct(m.source_accuracy)) +
+    metricCard("拒答正确", pct(m.refusal_accuracy)) +
+    metricCard("综合准确", pct(m.overall_accuracy)) +
+    '</div>';
+}
+
+function metricCard(lbl, val) {
+  return '<div class="metric"><div class="val">' + val + '</div><div class="lbl">' + lbl + '</div></div>';
+}
+
+async function loadRuns() {
+  const resp = await fetch(BASE + "/evaluation/runs", { headers: authHeaders() });
+  const rows = await resp.json();
+  if (!Array.isArray(rows) || rows.length === 0) {
+    document.getElementById("eval-runs").innerHTML = '<div class="msg">暂无评测历史</div>';
+    return;
+  }
+  let html = '<table><tr><th>时间</th><th>题数</th><th>关键词</th><th>来源</th><th>拒答</th><th>综合</th></tr>';
+  for (const r of rows) {
+    const m = r.metrics || {};
+    const pct = v => (v == null ? "-" : (v * 100).toFixed(1) + "%");
+    html += '<tr><td>' + (r.created_at || "").replace("T", " ").slice(0, 19) + '</td>' +
+      '<td>' + m.total + '</td><td>' + pct(m.keyword_accuracy) + '</td><td>' + pct(m.source_accuracy) + '</td>' +
+      '<td>' + pct(m.refusal_accuracy) + '</td><td>' + pct(m.overall_accuracy) + '</td></tr>';
+  }
+  html += '</table>';
+  document.getElementById("eval-runs").innerHTML = html;
+}
+
+refreshAuthUI();
+</script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-"""重排序：可选。默认 Noop，开启后尝试加载 cross-encoder。"""
+"""重排序：可选。默认 Noop，开启后加载 cross-encoder（模型名可配置）。"""
 from __future__ import annotations
 
 from typing import List, Protocol
@@ -31,7 +31,7 @@ class CrossEncoderReranker:
 def get_reranker(settings) -> Reranker:
     if settings.enable_rerank:
         try:
-            return CrossEncoderReranker()
+            return CrossEncoderReranker(settings.rerank_model)
         except Exception:
             return NoopReranker()
     return NoopReranker()
